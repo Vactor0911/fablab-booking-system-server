@@ -3,6 +3,7 @@ import MariaDB from "mariadb";
 import cors from "cors";
 import dotenv from "dotenv"; // 환경 변수 사용한 민감한 정보 관리
 import axios from "axios"; // HTTP 요청을 위한 라이브러리
+import bcrypt from "bcrypt"; // 비밀번호 암호화 최신버전
 
 // .env 파일 로드
 dotenv.config();
@@ -21,6 +22,8 @@ const db = MariaDB.createPool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
   connectionLimit: 10,
+  bigNumberStrings: true,
+  dateStrings: false
 });
 
 // MariaDB 연결 확인
@@ -44,3 +47,5 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 // ----------------- API 라우트 -----------------
+
+
