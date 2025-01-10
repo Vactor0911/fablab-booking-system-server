@@ -227,12 +227,12 @@ app.patch("/users/account", (req: Request, res: Response) => {
 
 // *** 좌석 예약 생성 API 시작 ***
 app.post("/reservations", (req: Request, res: Response) => {
-  const { user_id, seat_id, start_date, end_date } = req.body;
+  const { user_id, seat_id, start_date } = req.body;
 
   // Step 1: 좌석 중복 확인
   db.query(
-    "SELECT * FROM book WHERE seat_id = ? AND ((start_date <= ? AND end_date >= ?) OR (start_date <= ? AND end_date >= ?)) AND state = 'book'",
-    [seat_id, start_date, start_date, end_date, end_date]
+    "SELECT * FROM book WHERE seat_id = ? AND (start_date <= ? AND end_date IS NULL) AND state = 'book'",
+    [seat_id, start_date]
   )
     .then((rows: any) => {
       if (rows.length > 0) {
@@ -244,14 +244,14 @@ app.post("/reservations", (req: Request, res: Response) => {
 
       // Step 2: 예약 생성
       return db.query(
-        "INSERT INTO book (user_id, seat_id, start_date, end_date, state) VALUES (?, ?, ?, ?, 'book')",
-        [user_id, seat_id, start_date, end_date]
+        "INSERT INTO book (user_id, seat_id, start_date, state) VALUES (?, ?, ?, 'book')",
+        [user_id, seat_id, start_date]
       );
     })
     .then((result: any) => {
       res.status(201).json({
         success: true,
-        reservation_id: result.insertId,
+        reservation_id: result.insertId,  // 생성된 예약 ID
         status: "예약 완료",
       });
     })
@@ -264,6 +264,7 @@ app.post("/reservations", (req: Request, res: Response) => {
     });
 });
 // *** 좌석 예약 생성 API 끝 ***
+
 
 
 
