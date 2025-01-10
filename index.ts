@@ -50,11 +50,11 @@ app.listen(PORT, "0.0.0.0", () => {
 // ----------------- API 라우트 -----------------
 
 // *** 사용자 로그인 API 시작 ***
-app.post("/user/login", (req: Request, res: Response) => {
+app.post("/users/login", (req: Request, res: Response) => {
   const { id, password } = req.body;
 
   // Step 1: ID로 사용자 조회
-  db.query("SELECT * FROM user WHERE id = ?", [id])
+  db.query("SELECT * FROM user WHERE id = ? AND state = 'active'", [id])
     .then((rows: any) => {
       if (rows.length === 0) {
         // 사용자가 없는 경우
@@ -98,7 +98,7 @@ app.post("/user/login", (req: Request, res: Response) => {
               accessToken,
               refreshToken,
               name: user.name,
-              userId: user.user_id,
+              userId: user.user_id, // 사용자 ID, 프론트에서 사용
             });
         });
       });
@@ -115,7 +115,7 @@ app.post("/user/login", (req: Request, res: Response) => {
 }); // 사용자 로그인 API 끝
 
 // *** 사용자 회원가입 API 시작
-app.post("/user/register", (req: Request, res: Response) => {
+app.post("/users/register", (req: Request, res: Response) => {
   const { name, id, email, password } = req.body as {
     name: string;     // 이름
     id: string;       // 아이디(학번)
@@ -159,7 +159,7 @@ app.post("/user/register", (req: Request, res: Response) => {
 }); // *** 사용자 회원가입 API 끝
 
 // *** 로그아웃 API 시작 ***
-app.post("/user/logout", (req: Request, res: Response) => {
+app.post("/users/logout", (req: Request, res: Response) => {
   const { refreshToken } = req.body;
 
   db.query("SELECT * FROM user WHERE token = ?", [refreshToken])
@@ -190,6 +190,29 @@ app.post("/user/logout", (req: Request, res: Response) => {
     });
 });
 // *** 로그아웃 API 끝 ***
+
+// *** 계정 탈퇴 API 시작 ***
+app.patch("/users/account", (req: Request, res: Response) => {
+  const { user_id } = req.body;
+
+  db.query("UPDATE user SET state = 'inactive' WHERE user_id = ?", [user_id])
+    .then((rows) => {
+      res.status(200).json({
+        success: true,
+        message: "계정이 성공적으로 탈퇴되었습니다.",
+      });
+    })
+    .catch((err) => {
+      console.error("계정 탈퇴 처리 중 서버 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "계정 탈퇴 처리 중 오류가 발생했습니다.",
+      });
+    });
+});
+// *** 계정 탈퇴 API 끝 ***
+
+
 
 
 
