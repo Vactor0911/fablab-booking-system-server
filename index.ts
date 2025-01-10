@@ -114,7 +114,7 @@ app.post("/users/login", (req: Request, res: Response) => {
     });
 }); // 사용자 로그인 API 끝
 
-// *** 사용자 회원가입 API 시작
+// *** 사용자 회원가입 API 시작 ***
 app.post("/users/register", (req: Request, res: Response) => {
   const { name, id, email, password } = req.body as {
     name: string;     // 이름
@@ -123,32 +123,44 @@ app.post("/users/register", (req: Request, res: Response) => {
     password: string; // 비밀번호
   };
 
-  // Step 1: 학생 정보가 존재하는지 확인
-  db.query("SELECT student_id FROM student WHERE student_id = ? and name = ?", [id, name])
+  // Step 1: 비밀번호 조건 검증
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/;
+  if (!passwordRegex.test(password)) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 영문 대소문자, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.",
+    });
+    return;
+  }
+
+  // Step 2: 학생 정보가 존재하는지 확인
+  db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name])
     .then((rows_id: any) => {
       if (rows_id.length === 0) {
-        return res
-          .status(400)
-          .json({ success: false, message: "해당하는 학생이 존재하지 않습니다." });
+        return res.status(400).json({
+          success: false,
+          message: "해당하는 학생이 존재하지 않습니다." 
+        });
       }
 
-      // Step 2: 비밀번호 암호화
+      // Step 3: 비밀번호 암호화
       return bcrypt.hash(password, 10);
     })
     .then((hashedPassword: string) => {
-      // Step 3: 사용자 저장
+      // Step 4: 사용자 저장
       return db.query(
         "INSERT INTO user (name, id, email, password) VALUES (?, ?, ?, ?)",
         [name, id, email, hashedPassword]
       );
     })
     .then((result: any) => {
-      res
-        .status(201)
-        .json({ success: true, message: "사용자가 성공적으로 등록되었습니다" });
+      res.status(201).json({
+        success: true,
+        message: "사용자가 성공적으로 등록되었습니다",
+      });
     })
     .catch((err: any) => {
-      // Step 4: 에러 처리
+      // Step 5: 에러 처리
       console.error("서버 오류 발생:", err);
       res.status(500).json({
         success: false,
@@ -156,7 +168,8 @@ app.post("/users/register", (req: Request, res: Response) => {
         error: err.message,
       });
     });
-}); // *** 사용자 회원가입 API 끝
+}); 
+// *** 사용자 회원가입 API 끝 ***
 
 // *** 로그아웃 API 시작 ***
 app.post("/users/logout", (req: Request, res: Response) => {
