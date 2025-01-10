@@ -212,7 +212,45 @@ app.patch("/users/account", (req: Request, res: Response) => {
 });
 // *** 계정 탈퇴 API 끝 ***
 
+// *** 좌석 예약 생성 API 시작 ***
+app.post("/reservations", (req: Request, res: Response) => {
+  const { user_id, seat_id, start_date, end_date } = req.body;
 
+  // Step 1: 좌석 중복 확인
+  db.query(
+    "SELECT * FROM book WHERE seat_id = ? AND ((start_date <= ? AND end_date >= ?) OR (start_date <= ? AND end_date >= ?)) AND state = 'book'",
+    [seat_id, start_date, start_date, end_date, end_date]
+  )
+    .then((rows: any) => {
+      if (rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "해당 시간에 이미 예약된 좌석입니다.",
+        });
+      }
+
+      // Step 2: 예약 생성
+      return db.query(
+        "INSERT INTO book (user_id, seat_id, start_date, end_date, state) VALUES (?, ?, ?, ?, 'book')",
+        [user_id, seat_id, start_date, end_date]
+      );
+    })
+    .then((result: any) => {
+      res.status(201).json({
+        success: true,
+        reservation_id: result.insertId,
+        status: "예약 완료",
+      });
+    })
+    .catch((err) => {
+      console.error("예약 생성 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 예약 생성에 실패했습니다.",
+      });
+    });
+});
+// *** 좌석 예약 생성 API 끝 ***
 
 
 
