@@ -7,7 +7,9 @@ import jwt from "jsonwebtoken";
 
 import cookieParser from "cookie-parser"; // 쿠키 파싱 미들웨어 추가
 import adminRoutes from "./admin"; // 관리자 전용 API
-import { authenticateToken } from "./middleware/authenticate"; // 인증 미들웨어
+import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; // 인증 미들웨어
+
+import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
 
 // .env 파일 로드
 dotenv.config();
@@ -90,8 +92,20 @@ app.listen(PORT, "0.0.0.0", () => {
 app.post("/users/login", (req: Request, res: Response) => {
   const { id, password } = req.body;
 
-  // Step 1: ID로 사용자 조회
-  db.query("SELECT * FROM user WHERE id = ? AND state = 'active'", [id])
+  // Step 0: 탈퇴된 계정인지 확인
+  db.query("SELECT id, state FROM user WHERE id = ?", [id])
+    .then((rows: any) => {
+      if (rows.length > 0 && rows[0].state === "inactive") {
+        // 탈퇴된 계정인 경우
+        return Promise.reject({
+          status: 400,
+          message: "탈퇴된 계정입니다. 계정을 복구해주세요.",
+        });
+      }
+
+      // Step 1: ID로 사용자 조회
+      return db.query("SELECT * FROM user WHERE id = ? AND state = 'active'", [id]);
+    })
     .then((rows: any) => {
       if (rows.length === 0) {
         // 사용자가 없는 경우
@@ -114,7 +128,7 @@ app.post("/users/login", (req: Request, res: Response) => {
 
         // Step 3: Access Token 발급
         const accessToken = jwt.sign(
-          { userId: user.user_id, name: user.name, email: user.email },
+          { userId: user.user_id, name: user.name, permission: user.permission },
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
@@ -156,26 +170,35 @@ app.post("/users/login", (req: Request, res: Response) => {
     })
     .catch((err) => {
       // 에러 처리
-      console.error("서버 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "서버 오류 발생",
-        error: err.message,
-      });
+      if (err.status) {
+        res.status(err.status).json({
+          success: false,
+          message: err.message,
+        });
+      } else {
+        console.error("서버 오류 발생:", err);
+        res.status(500).json({
+          success: false,
+          message: "서버 오류 발생",
+          error: err.message,
+        });
+      }
     });
 });
 // *** 사용자 로그인 API 끝 ***
 
 
+
 // *** 사용자 회원가입 API 시작 ***
 app.post("/users/register", (req: Request, res: Response) => {
-  const { name, id, password } = req.body as {
+  const { name, id, password, email } = req.body as {
     name: string;     // 이름
     id: string;       // 아이디(학번)
     password: string; // 비밀번호
+    email: string;    // 이메일
   };
 
-  // // Step 0: 비밀번호 조건 검증
+  // // 비밀번호 조건 검증
   // const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/;
   // if (!passwordRegex.test(password)) {
   //   res.status(400).json({
@@ -185,10 +208,23 @@ app.post("/users/register", (req: Request, res: Response) => {
   //   return;
   // }
 
-  // Step 1: 학생 정보가 존재하는지 확인
-  db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name])
+  // Step 0: 탈퇴된 계정인지 확인
+  db.query("SELECT id, state FROM user WHERE id = ?", [id])
+    .then((rows: any) => {
+      if (rows.length > 0 && rows[0].state === "inactive") {
+        // 탈퇴된 계정인 경우
+        return Promise.reject({
+          status: 400,
+          message: "탈퇴된 계정입니다. 계정을 복구해주세요.",
+        });
+      }
+
+      // Step 1: 학생 정보가 존재하는지 확인
+      return db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name]);
+    })
     .then((rows: any) => {
       if (rows.length === 0) {
+        // 학생 정보가 없는 경우
         return Promise.reject({
           status: 400,
           message: "해당하는 학생이 존재하지 않습니다.",
@@ -196,10 +232,11 @@ app.post("/users/register", (req: Request, res: Response) => {
       }
 
       // Step 2: 사용자 ID 중복 확인
-      return db.query("SELECT id FROM user WHERE id = ?", [id]);
+      return db.query("SELECT id FROM user WHERE id = ? AND state = 'active'", [id]);
     })
     .then((rows: any) => {
       if (rows.length > 0) {
+        // 활성 계정이 이미 존재하는 경우
         return Promise.reject({
           status: 400,
           message: "이미 존재하는 학번입니다. 다른 학번을 사용해주세요.",
@@ -212,8 +249,8 @@ app.post("/users/register", (req: Request, res: Response) => {
     .then((hashedPassword: string) => {
       // Step 4: 사용자 저장
       return db.query(
-        "INSERT INTO user (name, id, password) VALUES (?, ?, ?)",
-        [name, id, hashedPassword]
+        "INSERT INTO user (name, id, password, state, email) VALUES (?, ?, ?, 'active', ?)",
+        [name, id, hashedPassword, email]
       );
     })
     .then((result: any) => {
@@ -349,14 +386,26 @@ app.post("/users/token/refresh", (req: Request, res: Response) => {
 });
 // *** 토큰 재발급 API 끝 ***
 
-
-
 // *** 계정 탈퇴 API 시작 ***
-app.patch("/users/account", (req: Request, res: Response) => {
-  const { user_id } = req.body;
+app.patch("/users/account", authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
 
-  db.query("UPDATE user SET state = 'inactive' WHERE user_id = ?", [user_id])
-    .then((rows) => {
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "인증된 사용자가 아닙니다.",
+    });
+    return;
+  }
+
+  // Step 1: 사용자 상태를 inactive로 변경하고 Refresh Token 초기화
+  db.query("UPDATE user SET state = 'inactive', refreshtoken = NULL WHERE user_id = ?", [userId])
+    .then(() => {
+      // Step 2: 클라이언트 쿠키 삭제 (로그아웃 처리)
+      res.clearCookie("accessToken");
+      res.clearCookie("refreshToken");
+
+      // Step 3: 응답 반환
       res.status(200).json({
         success: true,
         message: "계정이 성공적으로 탈퇴되었습니다.",
@@ -372,9 +421,10 @@ app.patch("/users/account", (req: Request, res: Response) => {
 });
 // *** 계정 탈퇴 API 끝 ***
 
+
 // *** 좌석 예약 생성 API 시작 ***
 app.post("/reservations", (req: Request, res: Response) => {
-  const { user_id, seat_id, start_date } = req.body;
+  const { userId, seat_id, start_date } = req.body;
 
   // Step 1: 좌석 중복 확인
   db.query(
@@ -392,7 +442,7 @@ app.post("/reservations", (req: Request, res: Response) => {
       // Step 2: 예약 생성
       return db.query(
         "INSERT INTO book (user_id, seat_id, start_date, state) VALUES (?, ?, ?, 'book')",
-        [user_id, seat_id, start_date]
+        [userId, seat_id, start_date]
       );
     })
     .then((result: any) => {
@@ -415,7 +465,130 @@ app.post("/reservations", (req: Request, res: Response) => {
 
 
 
+// 이메일 인증 코드 전송 API 시작
+app.post("/users/verify-email", async (req: Request, res: Response) => {
+  const { email } = req.body;
 
+  if (!email) {
+    res.status(400).json({ success: false, message: "이메일 주소가 필요합니다." });
+    return;
+  }
+
+  try {
+    // Step 0: 이메일 상태 확인
+    const [existingUser] = await db.query("SELECT email, state FROM user WHERE email = ?", [email]);
+
+    if (existingUser) {
+      if (existingUser.state === "inactive") {
+        res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+        return;
+      }
+      res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+      return;
+    }
+
+    // Step 1: 랜덤 인증 코드 생성
+    const generateRandomCode = (n: number): string => {
+      let str = "";
+      for (let i = 0; i < n; i++) {
+        str += Math.floor(Math.random() * 10);
+      }
+      return str;
+    };
+    const verificationCode = generateRandomCode(6);
+
+    // Step 2: 인증 코드 저장 (유효 기간 5분)
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5분 후
+    await db.query(
+      "INSERT INTO email_verification (email, verification_code, expires_at) VALUES (?, ?, ?)",
+      [email, verificationCode, expiresAt]
+    );
+
+    // Step 3: 이메일 전송
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.NODEMAILER_USER,
+        pass: process.env.NODEMAILER_PASS,
+      },
+    });
+
+    const mailOptions = {
+      from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+      to: email,
+      subject: "[FabLab 예약 시스템] 인증번호를 입력해주세요.",
+      html: `
+        <h1>이메일 인증</h1>
+        <div>
+          <h2>인증번호 [<b>${verificationCode}</b>]를 인증 창에 입력하세요.</h2><br/>
+        </div>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({
+      success: true,
+      message: "인증번호가 이메일로 발송되었습니다.",
+    });
+  } catch (err) {
+    console.error("Error sending email verification code:", err);
+    res.status(500).json({ success: false, message: "메일 발송에 실패했습니다." });
+  }
+});
+ // 이메일 인증 코드 전송 API 끝
+
+
+// 인증번호 검증 API 시작
+app.post("/users/verify-code", async (req: Request, res: Response) => {
+  const { email, code } = req.body;
+
+  if (!email) {
+    res.status(400).json({ success: false, message: "이메일을 입력해주세요." });
+    return;
+  }
+  if (!code) {
+    res.status(400).json({ success: false, message: "인증번호를 입력해주세요." });
+    return;
+  }
+
+  try {
+    // 인증 코드 검증
+    const [record] = await db.query(
+      "SELECT verification_code, expires_at FROM email_verification WHERE email = ? ORDER BY created_at DESC LIMIT 1",
+      [email]
+    );
+
+    if (!record) {
+      res.status(400).json({ success: false, message: "인증번호가 존재하지 않습니다." });
+      return;
+    }
+
+    const { verification_code: storedCode, expires_at: expiresAt } = record;
+
+    if (new Date() > new Date(expiresAt)) {
+      res.status(400).json({ success: false, message: "인증번호가 만료되었습니다." });
+      return;
+    }
+
+    if (storedCode !== code) {
+      res.status(400).json({ success: false, message: "인증번호가 일치하지 않습니다." });
+      return;
+    }
+
+    // 인증 성공
+    await db.query("DELETE FROM email_verification WHERE email = ?", [email]); // 검증 후 데이터 삭제
+
+    res.status(200).json({ success: true, message: "인증번호가 확인되었습니다." });
+  } catch (err) {
+    console.error("Error verifying code:", err);
+    res.status(500).json({ success: false, message: "서버 오류가 발생했습니다." });
+  }
+});
+ // 인증번호 검증 API 끝
 
 
 
