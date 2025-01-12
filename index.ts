@@ -175,7 +175,7 @@ app.post("/users/register", (req: Request, res: Response) => {
     password: string; // 비밀번호
   };
 
-  // // Step 0: 비밀번호 조건 검증
+  // // 비밀번호 조건 검증
   // const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/;
   // if (!passwordRegex.test(password)) {
   //   res.status(400).json({
@@ -185,10 +185,23 @@ app.post("/users/register", (req: Request, res: Response) => {
   //   return;
   // }
 
-  // Step 1: 학생 정보가 존재하는지 확인
-  db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name])
+  // Step 0: 탈퇴된 계정인지 확인
+  db.query("SELECT id, state FROM user WHERE id = ?", [id])
+    .then((rows: any) => {
+      if (rows.length > 0 && rows[0].state === "inactive") {
+        // 탈퇴된 계정인 경우
+        return Promise.reject({
+          status: 400,
+          message: "탈퇴된 계정입니다. 계정을 복구해주세요.",
+        });
+      }
+
+      // Step 1: 학생 정보가 존재하는지 확인
+      return db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name]);
+    })
     .then((rows: any) => {
       if (rows.length === 0) {
+        // 학생 정보가 없는 경우
         return Promise.reject({
           status: 400,
           message: "해당하는 학생이 존재하지 않습니다.",
@@ -196,10 +209,11 @@ app.post("/users/register", (req: Request, res: Response) => {
       }
 
       // Step 2: 사용자 ID 중복 확인
-      return db.query("SELECT id FROM user WHERE id = ?", [id]);
+      return db.query("SELECT id FROM user WHERE id = ? AND state = 'active'", [id]);
     })
     .then((rows: any) => {
       if (rows.length > 0) {
+        // 활성 계정이 이미 존재하는 경우
         return Promise.reject({
           status: 400,
           message: "이미 존재하는 학번입니다. 다른 학번을 사용해주세요.",
@@ -212,7 +226,7 @@ app.post("/users/register", (req: Request, res: Response) => {
     .then((hashedPassword: string) => {
       // Step 4: 사용자 저장
       return db.query(
-        "INSERT INTO user (name, id, password) VALUES (?, ?, ?)",
+        "INSERT INTO user (name, id, password, state) VALUES (?, ?, ?, 'active')",
         [name, id, hashedPassword]
       );
     })
@@ -349,14 +363,26 @@ app.post("/users/token/refresh", (req: Request, res: Response) => {
 });
 // *** 토큰 재발급 API 끝 ***
 
-
-
 // *** 계정 탈퇴 API 시작 ***
-app.patch("/users/account", (req: Request, res: Response) => {
-  const { user_id } = req.body;
+app.patch("/users/account", authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
 
-  db.query("UPDATE user SET state = 'inactive' WHERE user_id = ?", [user_id])
-    .then((rows) => {
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "인증된 사용자가 아닙니다.",
+    });
+    return;
+  }
+
+  // Step 1: 사용자 상태를 inactive로 변경하고 Refresh Token 초기화
+  db.query("UPDATE user SET state = 'inactive', refreshtoken = NULL WHERE user_id = ?", [userId])
+    .then(() => {
+      // Step 2: 클라이언트 쿠키 삭제 (로그아웃 처리)
+      res.clearCookie("accessToken");
+      res.clearCookie("refreshToken");
+
+      // Step 3: 응답 반환
       res.status(200).json({
         success: true,
         message: "계정이 성공적으로 탈퇴되었습니다.",
@@ -371,6 +397,7 @@ app.patch("/users/account", (req: Request, res: Response) => {
     });
 });
 // *** 계정 탈퇴 API 끝 ***
+
 
 // *** 좌석 예약 생성 API 시작 ***
 app.post("/reservations", (req: Request, res: Response) => {

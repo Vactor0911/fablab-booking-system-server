@@ -19,5 +19,8 @@
         "jsonwebtoken": "^9.0.2",
         "mariadb": "^3.4.0",
         "vite-node": "^2.1.5"
+    },
+    "devDependencies": {
+        "@types/cookie-parser": "^1.4.8"
     }
 }
