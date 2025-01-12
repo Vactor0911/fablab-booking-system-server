@@ -7,7 +7,7 @@ import jwt from "jsonwebtoken";
 
 import cookieParser from "cookie-parser"; // 쿠키 파싱 미들웨어 추가
 import adminRoutes from "./admin"; // 관리자 전용 API
-import { authenticateToken } from "./middleware/authenticate"; // 인증 미들웨어
+import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; // 인증 미들웨어
 
 // .env 파일 로드
 dotenv.config();
@@ -114,7 +114,7 @@ app.post("/users/login", (req: Request, res: Response) => {
 
         // Step 3: Access Token 발급
         const accessToken = jwt.sign(
-          { userId: user.user_id, name: user.name, email: user.email },
+          { userId: user.user_id, name: user.name, permission: user.permission },
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
@@ -401,7 +401,7 @@ app.patch("/users/account", authenticateToken, (req: Request, res: Response) => 
 
 // *** 좌석 예약 생성 API 시작 ***
 app.post("/reservations", (req: Request, res: Response) => {
-  const { user_id, seat_id, start_date } = req.body;
+  const { userId, seat_id, start_date } = req.body;
 
   // Step 1: 좌석 중복 확인
   db.query(
@@ -419,7 +419,7 @@ app.post("/reservations", (req: Request, res: Response) => {
       // Step 2: 예약 생성
       return db.query(
         "INSERT INTO book (user_id, seat_id, start_date, state) VALUES (?, ?, ?, 'book')",
-        [user_id, seat_id, start_date]
+        [userId, seat_id, start_date]
       );
     })
     .then((result: any) => {
