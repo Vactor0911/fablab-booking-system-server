@@ -90,8 +90,20 @@ app.listen(PORT, "0.0.0.0", () => {
 app.post("/users/login", (req: Request, res: Response) => {
   const { id, password } = req.body;
 
-  // Step 1: ID로 사용자 조회
-  db.query("SELECT * FROM user WHERE id = ? AND state = 'active'", [id])
+  // Step 0: 탈퇴된 계정인지 확인
+  db.query("SELECT id, state FROM user WHERE id = ?", [id])
+    .then((rows: any) => {
+      if (rows.length > 0 && rows[0].state === "inactive") {
+        // 탈퇴된 계정인 경우
+        return Promise.reject({
+          status: 400,
+          message: "탈퇴된 계정입니다. 계정을 복구해주세요.",
+        });
+      }
+
+      // Step 1: ID로 사용자 조회
+      return db.query("SELECT * FROM user WHERE id = ? AND state = 'active'", [id]);
+    })
     .then((rows: any) => {
       if (rows.length === 0) {
         // 사용자가 없는 경우
@@ -156,15 +168,23 @@ app.post("/users/login", (req: Request, res: Response) => {
     })
     .catch((err) => {
       // 에러 처리
-      console.error("서버 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "서버 오류 발생",
-        error: err.message,
-      });
+      if (err.status) {
+        res.status(err.status).json({
+          success: false,
+          message: err.message,
+        });
+      } else {
+        console.error("서버 오류 발생:", err);
+        res.status(500).json({
+          success: false,
+          message: "서버 오류 발생",
+          error: err.message,
+        });
+      }
     });
 });
 // *** 사용자 로그인 API 끝 ***
+
 
 
 // *** 사용자 회원가입 API 시작 ***
