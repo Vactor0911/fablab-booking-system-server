@@ -1,22 +1,33 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import MariaDB from "mariadb";
 import cors from "cors";
 import dotenv from "dotenv"; // 환경 변수 사용한 민감한 정보 관리
-import axios from "axios"; // HTTP 요청을 위한 라이브러리
 import bcrypt from "bcrypt"; // 비밀번호 암호화 최신버전
 import jwt from "jsonwebtoken";
 
+import cookieParser from "cookie-parser"; // 쿠키 파싱 미들웨어 추가
+import adminRoutes from "./admin"; // 관리자 전용 API
+import { authenticateToken } from "./middleware/authenticate"; // 인증 미들웨어
+
 // .env 파일 로드
 dotenv.config();
+// 환경변수가 하나라도 없으면 서버 실행 불가
+["DB_HOST", "DB_PORT", "DB_USERNAME", "DB_PASSWORD", "DB_DATABASE", "JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET"].forEach((key) => {
+  if (!process.env[key]) {
+    throw new Error(`해당 환경변수가 존재하지 않습니다.: ${key}`);
+  }
+});
 
 const PORT = 3010; // 서버가 실행될 포트 번호
+const FRONT_PORT = 4000; // 프론트 서버 포트 번호
 
 const app = express();
-app.use(cors()); // CORS 미들웨어 추가
+app.use(cors({ origin: `http://localhost:${FRONT_PORT}`, credentials: true })); // CORS 설정, credentials는 프론트와 백엔드의 쿠키 공유를 위해 필요
 app.use(express.json()); // JSON 요청을 처리하기 위한 미들웨어
+app.use(cookieParser()); // 쿠키 파싱 미들웨어 등록
 
 // MariaDB 연결
-const db = MariaDB.createPool({
+export const db = MariaDB.createPool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),
   user: process.env.DB_USERNAME,
@@ -42,6 +53,32 @@ app.get("/", (req, res) => {
   res.send("FabLab Booking System Web Server!");
 });
 
+// *** 라우트 정의 시작 ***
+
+// 관리자 전용 API 연결
+app.use("/admin", adminRoutes);
+
+
+// *** 라우트 정의 끝 ***
+
+// 글로벌 에러 핸들러 추가 시작
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof SyntaxError && "body" in err) {
+    res.status(400).json({
+      success: false,
+      message: "잘못된 JSON 형식입니다.",
+    });
+    return;
+  }
+
+  console.error("Unhandled Error:", err);
+  res.status(500).json({
+    success: false,
+    message: "서버 오류가 발생했습니다.",
+  });
+}); // 글로벌 에러 핸들러 추가 끝
+
+
 // 서버 시작
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`서버가 ${PORT}번 포트에서 실행 중입니다.`);
@@ -66,7 +103,7 @@ app.post("/users/login", (req: Request, res: Response) => {
 
       const user = rows[0];
 
-      // Step 3: 암호화된 비밀번호 비교
+      // Step 2: 암호화된 비밀번호 비교
       return bcrypt.compare(password, user.password).then((isPasswordMatch) => {
         if (!isPasswordMatch) {
           return res.status(401).json({
@@ -75,32 +112,46 @@ app.post("/users/login", (req: Request, res: Response) => {
           });
         }
 
-         // Access Token 발급
-         const accessToken = jwt.sign(
+        // Step 3: Access Token 발급
+        const accessToken = jwt.sign(
           { userId: user.user_id, name: user.name, email: user.email },
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
 
-        // Refresh Token 발급
+        // Step 4: Refresh Token 발급
         const refreshToken = jwt.sign(
           { userId: user.user_id },
           process.env.JWT_REFRESH_SECRET!,
           { expiresIn: "7d" } // Refresh Token 만료 시간
         );
 
-        // Refresh Token 데이터베이스에 저장
-        return db.query("UPDATE user SET token = ? WHERE id = ?", [refreshToken, id])
+        // Step 5: Refresh Token 저장 (DB)
+        return db.query("UPDATE user SET refreshtoken = ? WHERE id = ?", [refreshToken, id])
           .then(() => {
-            res.json({
+            // Step 6: 쿠키에 Access Token과 Refresh Token 저장
+            res.cookie("accessToken", accessToken, {
+              httpOnly: true,
+              secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
+              sameSite: "strict", // CSRF 방지
+              maxAge: 15 * 60 * 1000, // 15분
+            });
+
+            res.cookie("refreshToken", refreshToken, {
+              httpOnly: true,
+              secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
+              sameSite: "strict", // CSRF 방지
+              maxAge: 7 * 24 * 60 * 60 * 1000, // 7일
+            });
+
+            // Step 7: 응답 반환
+            res.status(200).json({
               success: true,
               message: "로그인 성공",
-              accessToken,
-              refreshToken,
               name: user.name,
               userId: user.user_id, // 사용자 ID, 프론트에서 사용
             });
-        });
+          });
       });
     })
     .catch((err) => {
@@ -112,34 +163,46 @@ app.post("/users/login", (req: Request, res: Response) => {
         error: err.message,
       });
     });
-}); // 사용자 로그인 API 끝
+});
+// *** 사용자 로그인 API 끝 ***
+
 
 // *** 사용자 회원가입 API 시작 ***
 app.post("/users/register", (req: Request, res: Response) => {
-  const { name, id, email, password } = req.body as {
+  const { name, id, password } = req.body as {
     name: string;     // 이름
     id: string;       // 아이디(학번)
-    email: string;    // 이메일
     password: string; // 비밀번호
   };
 
-  // Step 1: 비밀번호 조건 검증
-  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/;
-  if (!passwordRegex.test(password)) {
-    res.status(400).json({
-      success: false,
-      message: "비밀번호는 영문 대소문자, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.",
-    });
-    return;
-  }
+  // // Step 0: 비밀번호 조건 검증
+  // const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/;
+  // if (!passwordRegex.test(password)) {
+  //   res.status(400).json({
+  //     success: false,
+  //     message: "비밀번호는 영문 대소문자, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.",
+  //   });
+  //   return;
+  // }
 
-  // Step 2: 학생 정보가 존재하는지 확인
+  // Step 1: 학생 정보가 존재하는지 확인
   db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name])
-    .then((rows_id: any) => {
-      if (rows_id.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "해당하는 학생이 존재하지 않습니다." 
+    .then((rows: any) => {
+      if (rows.length === 0) {
+        return Promise.reject({
+          status: 400,
+          message: "해당하는 학생이 존재하지 않습니다.",
+        });
+      }
+
+      // Step 2: 사용자 ID 중복 확인
+      return db.query("SELECT id FROM user WHERE id = ?", [id]);
+    })
+    .then((rows: any) => {
+      if (rows.length > 0) {
+        return Promise.reject({
+          status: 400,
+          message: "이미 존재하는 학번입니다. 다른 학번을 사용해주세요.",
         });
       }
 
@@ -149,46 +212,67 @@ app.post("/users/register", (req: Request, res: Response) => {
     .then((hashedPassword: string) => {
       // Step 4: 사용자 저장
       return db.query(
-        "INSERT INTO user (name, id, email, password) VALUES (?, ?, ?, ?)",
-        [name, id, email, hashedPassword]
+        "INSERT INTO user (name, id, password) VALUES (?, ?, ?)",
+        [name, id, hashedPassword]
       );
     })
     .then((result: any) => {
+      // Step 5: 성공 응답 반환
       res.status(201).json({
         success: true,
         message: "사용자가 성공적으로 등록되었습니다",
       });
     })
     .catch((err: any) => {
-      // Step 5: 에러 처리
-      console.error("서버 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "서버 오류 발생",
-        error: err.message,
-      });
+      // Step 6: 에러 처리
+      if (err.status) {
+        // 사용자 정의 에러 처리
+        res.status(err.status).json({
+          success: false,
+          message: err.message,
+        });
+      } else {
+        console.error("서버 오류 발생:", err);
+        res.status(500).json({
+          success: false,
+          message: "서버 오류 발생",
+          error: err.message,
+        });
+      }
     });
-}); 
+});
 // *** 사용자 회원가입 API 끝 ***
+
 
 // *** 로그아웃 API 시작 ***
 app.post("/users/logout", (req: Request, res: Response) => {
-  const { refreshToken } = req.body;
+  const { refreshToken } = req.cookies; // 쿠키에서 Refresh Token 추출
 
-  db.query("SELECT * FROM user WHERE token = ?", [refreshToken])
-    .then((rows: any[]): Promise<void> => {
+  if (!refreshToken) {
+    res.status(400).json({
+      success: false,
+      message: "Refresh Token이 필요합니다.",
+    });
+    return;
+  }
+
+  db.query("SELECT * FROM user WHERE refreshtoken = ?", [refreshToken])
+    .then((rows: any[]) => {
       if (rows.length === 0) {
-        res.status(404).json({
+        return res.status(404).json({
           success: false,
-          message: "유효하지 않은 토큰입니다.",
+          message: "유효하지 않은 Refresh Token입니다.",
         });
-        return Promise.resolve();
       }
 
       // DB에서 Refresh Token 제거
-      return db.query("UPDATE user SET token = NULL WHERE token = ?", [refreshToken])
+      return db.query("UPDATE user SET refreshtoken = NULL WHERE refreshtoken = ?", [refreshToken])
         .then(() => {
-          res.status(200).json({
+          // 클라이언트에서 쿠키 삭제
+          res.clearCookie("accessToken");
+          res.clearCookie("refreshToken");
+
+          return res.status(200).json({
             success: true,
             message: "로그아웃이 성공적으로 완료되었습니다.",
           });
@@ -203,6 +287,69 @@ app.post("/users/logout", (req: Request, res: Response) => {
     });
 });
 // *** 로그아웃 API 끝 ***
+
+
+// *** 토큰 재발급 API 시작 ***
+app.post("/users/token/refresh", (req: Request, res: Response) => {
+  const { refreshToken } = req.cookies; // 쿠키에서 Refresh Token 추출
+
+  if (!refreshToken) {
+    res.status(400).json({
+      success: false,
+      message: "Refresh Token이 필요합니다.",
+    });
+    return;
+  }
+
+  db.query("SELECT * FROM user WHERE refreshtoken = ?", [refreshToken])
+    .then((rows: any) => {
+      if (rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: "유효하지 않은 Refresh Token입니다.",
+        });
+      }
+
+      // Refresh Token 유효성 검증 및 Access Token 재발급
+      try {
+        const decoded: any = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!);
+        const newAccessToken = jwt.sign(
+          { userId: decoded.userId },
+          process.env.JWT_ACCESS_SECRET!,
+          { expiresIn: "15m" } // Access Token 만료 시간
+        );
+
+        res.cookie("accessToken", newAccessToken, {
+          httpOnly: true,
+          secure: false, // HTTPS 환경에서 true
+          sameSite: "strict",
+          maxAge: 15 * 60 * 1000, // 15분
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: "Access Token이 갱신되었습니다.",
+        });
+      } catch (err) {
+        // Refresh Token 만료 시 DB에서 삭제
+        db.query("UPDATE user SET refreshtoken = NULL WHERE refreshtoken = ?", [refreshToken]);
+        return res.status(403).json({
+          success: false,
+          message: "Refresh Token이 만료되었습니다.",
+        });
+      }
+    })
+    .catch((err) => {
+      console.error("Token Refresh 처리 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 토큰 갱신에 실패했습니다.",
+      });
+    });
+});
+// *** 토큰 재발급 API 끝 ***
+
+
 
 // *** 계정 탈퇴 API 시작 ***
 app.patch("/users/account", (req: Request, res: Response) => {
@@ -264,6 +411,9 @@ app.post("/reservations", (req: Request, res: Response) => {
     });
 });
 // *** 좌석 예약 생성 API 끝 ***
+
+
+
 
 
 
