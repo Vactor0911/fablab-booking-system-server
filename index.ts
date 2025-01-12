@@ -463,11 +463,10 @@ app.post("/reservations", (req: Request, res: Response) => {
 // *** 좌석 예약 생성 API 끝 ***
 
 
-// 인증번호 저장 변수 (실제 운영 시 Redis와 같은 저장소를 사용 권장)
-const verificationCodes: Record<string, string> = {};
+
 
 // 이메일 인증 코드 전송 API 시작
-app.post("/users/verify-email", (req: Request, res: Response) => {
+app.post("/users/verify-email", async (req: Request, res: Response) => {
   const { email } = req.body;
 
   if (!email) {
@@ -475,125 +474,121 @@ app.post("/users/verify-email", (req: Request, res: Response) => {
     return;
   }
 
-  // Step 0: 이메일 상태 확인
-  db.query("SELECT email, state FROM user WHERE email = ?", [email])
-    .then((rows: any) => {
-      if (rows.length > 0) {
-        if (rows[0].state === "inactive") {
-          // 탈퇴된 계정인 경우
-          return Promise.reject({
-            status: 400,
-            message: "탈퇴된 계정입니다. 계정을 복구해주세요.",
-          });
-        }
+  try {
+    // Step 0: 이메일 상태 확인
+    const [existingUser] = await db.query("SELECT email, state FROM user WHERE email = ?", [email]);
 
-        // 이메일이 이미 사용 중인 경우
-        return Promise.reject({
-          status: 400,
-          message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요.",
-        });
+    if (existingUser) {
+      if (existingUser.state === "inactive") {
+        res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+        return;
       }
+      res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+      return;
+    }
 
-      // 이메일 사용 가능 상태 (새로운 계정)
-      return Promise.resolve();
-    })
-    .then(() => {
-      // Step 1: 랜덤 인증 코드 생성
-      const generateRandomCode = (n: number): string => {
-        let str = "";
-        for (let i = 0; i < n; i++) {
-          str += Math.floor(Math.random() * 10);
-        }
-        return str;
-      };
-      const verificationCode = generateRandomCode(6); // 6자리 인증 코드 생성
-      verificationCodes[email] = verificationCode; // 이메일과 코드 매핑
-
-      // Step 2: Nodemailer 설정 및 전송
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        host: "smtp.gmail.com",
-        port: 587,
-        secure: false,
-        auth: {
-          user: process.env.NODEMAILER_USER,
-          pass: process.env.NODEMAILER_PASS,
-        },
-      });
-
-      const mailOptions = {
-        from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
-        to: email,
-        subject: "[FabLab 예약 시스템] 인증번호를 입력해주세요.",
-        html: `
-          <h1>이메일 인증</h1>
-          <div>
-            <h2>인증번호 [<b>${verificationCode}</b>]를 인증 창에 입력하세요.</h2><br/>
-          </div>
-        `,
-      };
-
-      // Step 3: 이메일 전송
-      return transporter.sendMail(mailOptions);
-    })
-    .then((info) => {
-      console.log("Email sent: " + info.response);
-
-      res.status(200).json({
-        success: true,
-        message: "인증번호가 이메일로 발송되었습니다.",
-      });
-    })
-    .catch((err) => {
-      if (err.status) {
-        // 사용자 정의 에러 처리
-        res.status(err.status).json({ success: false, message: err.message });
-      } else {
-        // 시스템 에러 처리
-        console.error("Email sending failed or server error:", err);
-        res.status(500).json({
-          success: false,
-          message: "메일 발송에 실패했습니다.",
-        });
+    // Step 1: 랜덤 인증 코드 생성
+    const generateRandomCode = (n: number): string => {
+      let str = "";
+      for (let i = 0; i < n; i++) {
+        str += Math.floor(Math.random() * 10);
       }
+      return str;
+    };
+    const verificationCode = generateRandomCode(6);
+
+    // Step 2: 인증 코드 저장 (유효 기간 5분)
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5분 후
+    await db.query(
+      "INSERT INTO email_verification (email, verification_code, expires_at) VALUES (?, ?, ?)",
+      [email, verificationCode, expiresAt]
+    );
+
+    // Step 3: 이메일 전송
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.NODEMAILER_USER,
+        pass: process.env.NODEMAILER_PASS,
+      },
     });
-}); // 이메일 인증 코드 전송 API 끝
+
+    const mailOptions = {
+      from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+      to: email,
+      subject: "[FabLab 예약 시스템] 인증번호를 입력해주세요.",
+      html: `
+        <h1>이메일 인증</h1>
+        <div>
+          <h2>인증번호 [<b>${verificationCode}</b>]를 인증 창에 입력하세요.</h2><br/>
+        </div>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({
+      success: true,
+      message: "인증번호가 이메일로 발송되었습니다.",
+    });
+  } catch (err) {
+    console.error("Error sending email verification code:", err);
+    res.status(500).json({ success: false, message: "메일 발송에 실패했습니다." });
+  }
+});
+ // 이메일 인증 코드 전송 API 끝
 
 
 // 인증번호 검증 API 시작
-app.post("/users/verify-code", (req: Request, res: Response) => {
+app.post("/users/verify-code", async (req: Request, res: Response) => {
   const { email, code } = req.body;
 
   if (!email) {
-    res.status(400).json({
-      success: false,
-      message: "이메일을 입력해주세요.",
-    });
+    res.status(400).json({ success: false, message: "이메일을 입력해주세요." });
     return;
   }
   if (!code) {
-    res.status(400).json({
-      success: false,
-      message: "인증번호를 입력해주세요.",
-    });
+    res.status(400).json({ success: false, message: "인증번호를 입력해주세요." });
     return;
   }
 
-  // 인증번호 검증
-  const storedCode = verificationCodes[email];
-  if (storedCode && storedCode === code) {
-    delete verificationCodes[email]; // 검증 후 인증번호 제거
-    res.status(200).json({
-      success: true,
-      message: "인증번호가 확인되었습니다.",
-    });
-  } else {
-    res.status(400).json({
-      success: false,
-      message: "인증번호가 일치하지 않습니다.",
-    });
+  try {
+    // 인증 코드 검증
+    const [record] = await db.query(
+      "SELECT verification_code, expires_at FROM email_verification WHERE email = ? ORDER BY created_at DESC LIMIT 1",
+      [email]
+    );
+
+    if (!record) {
+      res.status(400).json({ success: false, message: "인증번호가 존재하지 않습니다." });
+      return;
+    }
+
+    const { verification_code: storedCode, expires_at: expiresAt } = record;
+
+    if (new Date() > new Date(expiresAt)) {
+      res.status(400).json({ success: false, message: "인증번호가 만료되었습니다." });
+      return;
+    }
+
+    if (storedCode !== code) {
+      res.status(400).json({ success: false, message: "인증번호가 일치하지 않습니다." });
+      return;
+    }
+
+    // 인증 성공
+    await db.query("DELETE FROM email_verification WHERE email = ?", [email]); // 검증 후 데이터 삭제
+
+    res.status(200).json({ success: true, message: "인증번호가 확인되었습니다." });
+  } catch (err) {
+    console.error("Error verifying code:", err);
+    res.status(500).json({ success: false, message: "서버 오류가 발생했습니다." });
   }
-}); // 인증번호 검증 API 끝
+});
+ // 인증번호 검증 API 끝
 
 
 
