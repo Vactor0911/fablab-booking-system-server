@@ -613,7 +613,7 @@ app.get("/seats", limiter, authenticateToken, (req: Request, res: Response) => {
 
 // 이메일 인증 코드 전송 API 시작
 app.post("/users/verify-email", async (req: Request, res: Response) => {
-  const { email, id, purpose } = req.body; // 요청에 id 추가
+  const { email, id, purpose, name = "" } = req.body; // 요청에 id 추가, name은 선택적
 
   if (!email || !id) {
     res.status(400).json({ success: false, message: "학번과 이메일 주소가 필요합니다." });
@@ -621,12 +621,11 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
   }
 
   try {
-    // Step 0: 이메일 상태 확인
-    const rows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
-    const user = rows[0];
-
     if (purpose === "resetPassword") {
-      // 비밀번호 재설정인 경우
+      // Step 0: 이메일과 학번이 일치하는 계정 확인 (비밀번호 재설정)
+      const rows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
+      const user = rows[0];
+
       if (!user) {
         res.status(404).json({ success: false, message: "학번과 이메일이 일치하는 계정이 없습니다." });
         return;
@@ -636,22 +635,59 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
         res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
         return;
       }
-    } else if (purpose === "verifyAccount") {
-      // 계정 인증인 경우 (회원가입)
-      const existingUserRows = await db.query("SELECT email, state FROM user WHERE email = ?", [email]);
+    } 
+    else if (purpose === "verifyAccount") {
+      // 회원가입 요청
+    
+      // Step 1: 학생 정보가 존재하는지 확인
+      const studentRows = await db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name]);
+      const student = studentRows[0];
+    
+      if (!student) {
+        res.status(400).json({
+          success: false,
+          message: "해당 학번과 이름에 맞는 학생 정보를 찾을 수 없습니다. 관리자에게 문의하세요.",
+        });
+        return;
+      }
+    
+      // Step 2: 사용자 정보 확인
+      const existingUserRows = await db.query("SELECT id, email, state FROM user WHERE id = ? OR email = ?", [id, email]);
       const existingUser = existingUserRows[0];
-
+    
       if (existingUser) {
-        if (existingUser.state === "inactive") {
-          res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+        if (existingUser.id === id) {
+          res.status(400).json({ success: false, message: "이미 존재하는 학번입니다. 다른 학번을 사용해주세요." });
           return;
         }
+    
+        if (existingUser.email === email) {
+          if (existingUser.state === "inactive") {
+            res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+            return;
+          }
+    
+          res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+          return;
+        }
+      }
+    }
+    else if (purpose === "accountRecovery") {
+      // 계정 복구 요청
+      const rows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
+      const user = rows[0];
 
-        res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+      if (!user) {
+        res.status(404).json({ success: false, message: "학번과 이메일이 일치하는 계정이 없습니다." });
+        return;
+      }
+
+      if (user.state !== "inactive") {
+        res.status(400).json({ success: false, message: "이미 활성화된 계정입니다." });
         return;
       }
     } else {
-      // purpose가 유효하지 않은 경우
+      // 유효하지 않은 purpose
       res.status(400).json({ success: false, message: "잘못된 요청입니다." });
       return;
     }
@@ -704,6 +740,7 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
       message: "인증번호가 이메일로 발송되었습니다.",
     });
   } catch (err) {
+    console.error("Error sending email verification code:", err);
     res.status(500).json({ success: false, message: "메일 발송에 실패했습니다." });
   }
 });
@@ -807,6 +844,60 @@ app.post("/users/verify-code", async (req: Request, res: Response) => {
     });
 });
 // 비밀번호 재설정 API 끝
+
+// 계정 복구 API 시작
+app.patch("/users/account/recovery", (req: Request, res: Response) => {
+  const { id, email } = req.body;
+
+  if (!id || !email) {
+    res.status(400).json({
+      success: false,
+      message: "학번과 이메일을 모두 입력해주세요.",
+    });
+    return;
+  }
+
+  // Step 1: 학번과 이메일이 일치하는 계정 확인
+  db.query("SELECT * FROM user WHERE id = ? AND email = ?", [id, email])
+    .then((rows: any[]) => {
+      const user = rows[0];
+
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: "학번과 이메일이 일치하는 계정을 찾을 수 없습니다.",
+        });
+        return Promise.reject(); // 이후 실행 방지
+      }
+
+      if (user.state === "active") {
+        res.status(400).json({
+          success: false,
+          message: "이미 활성화된 계정입니다.",
+        });
+        return Promise.reject(); // 이후 실행 방지
+      }
+
+      // Step 2: 계정 상태 복구
+      return db.query("UPDATE user SET state = 'active' WHERE id = ? AND email = ?", [id, email]);
+    })
+    .then(() => {
+      res.status(200).json({
+        success: true,
+        message: "계정이 성공적으로 복구되었습니다.",
+      });
+    })
+    .catch((err) => {
+      if (err) {
+        console.error("계정 복구 처리 중 오류 발생:", err);
+        res.status(500).json({
+          success: false,
+          message: "서버 오류로 인해 계정 복구에 실패했습니다.",
+        });
+      }
+    });
+});
+// 계정 복구 API 끝
 
 
 
