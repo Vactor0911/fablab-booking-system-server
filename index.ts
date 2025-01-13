@@ -80,6 +80,11 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   });
 }); // 글로벌 에러 핸들러 추가 끝
 
+// BigInt를 JSON으로 직렬화하기 위한 글로벌 함수
+(BigInt.prototype as any).toJSON = function () {
+  return this.toString();
+};
+
 
 // 서버 시작
 app.listen(PORT, "0.0.0.0", () => {
@@ -421,48 +426,99 @@ app.patch("/users/account", authenticateToken, (req: Request, res: Response) => 
 });
 // *** 계정 탈퇴 API 끝 ***
 
+// 좌석 예약 상태 확인 API 시작
+app.get("/reservations", authenticateToken, (req: Request, res: Response) => {
+  db.query("SELECT seat_id FROM book WHERE state = 'book'")
+    .then((rows: any) => {
+      res.status(200).json(rows);
+    })
+    .catch((err) => {
+      console.error("예약 상태를 가져오는 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 예약 상태를 가져오지 못했습니다.",
+      });
+    });
+});
+// 좌석 예약 상태 확인 API 끝
+
 
 // *** 좌석 예약 생성 API 시작 ***
-app.post("/reservations", (req: Request, res: Response) => {
-  const { userId, seat_id, start_date } = req.body;
+app.post("/reservations", authenticateToken, (req: Request, res: Response) => {
+  const { userId, seat_id, book_date } = req.body;
 
-  // Step 1: 좌석 중복 확인
-  db.query(
-    "SELECT * FROM book WHERE seat_id = ? AND (start_date <= ? AND end_date IS NULL) AND state = 'book'",
-    [seat_id, start_date]
-  )
+  // Step 1: 좌석 존재 확인
+  db.query("SELECT * FROM seat WHERE seat_id = ?", [seat_id])
     .then((rows: any) => {
-      if (rows.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: "해당 시간에 이미 예약된 좌석입니다.",
+      if (rows.length === 0) {
+        return Promise.reject({
+          status: 400,
+          message: "존재하지 않는 좌석입니다.",
         });
       }
 
-      // Step 2: 예약 생성
+      // Step 2: 좌석 예약 상태 확인
       return db.query(
-        "INSERT INTO book (user_id, seat_id, start_date, state) VALUES (?, ?, ?, 'book')",
-        [userId, seat_id, start_date]
+        "SELECT * FROM book WHERE seat_id = ? AND state = 'book'",
+        [seat_id]
+      );
+    })
+    .then((rows: any) => {
+      if (rows.length > 0) {
+        return Promise.reject({
+          status: 400,
+          message: "이미 예약된 좌석입니다.",
+        });
+      }
+
+      // Step 3: 예약 생성
+      return db.query(
+        "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, ?, 'book')",
+        [userId, seat_id, book_date]
       );
     })
     .then((result: any) => {
       res.status(201).json({
         success: true,
-        reservation_id: result.insertId,  // 생성된 예약 ID
-        status: "예약 완료",
+        reservation_id: result.insertId, // 생성된 예약 ID 반환
+        message: "예약이 성공적으로 완료되었습니다.",
       });
     })
     .catch((err) => {
-      console.error("예약 생성 중 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "서버 오류로 인해 예약 생성에 실패했습니다.",
-      });
+      if (err.status) {
+        res.status(err.status).json({
+          success: false,
+          message: err.message,
+        });
+      } else {
+        console.error("예약 생성 중 오류 발생:", err);
+        res.status(500).json({
+          success: false,
+          message: "예약 생성 중 서버 오류가 발생했습니다.",
+        });
+      }
     });
 });
 // *** 좌석 예약 생성 API 끝 ***
 
-
+// 좌석 데이터 제공 API 시작
+app.get("/seats", authenticateToken, (req: Request, res: Response) => {
+  db.query("SELECT * FROM seat")
+    .then((rows: any) => {
+      res.status(200).json({
+        success: true,
+        seats: rows, // 좌석 데이터 반환
+      });
+    })
+    .catch((err) => {
+      console.error("좌석 데이터를 가져오는 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "좌석 데이터를 불러오는 데 실패했습니다.",
+      });
+    });
+});
+// 좌석 데이터 제공 API 끝
 
 
 // 이메일 인증 코드 전송 API 시작
