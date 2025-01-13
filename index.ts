@@ -5,7 +5,8 @@ import dotenv from "dotenv"; // 환경 변수 사용한 민감한 정보 관리
 import bcrypt from "bcrypt"; // 비밀번호 암호화 최신버전
 import jwt from "jsonwebtoken";
 
-import lusca from "lusca"; // 보안 미들웨어
+import moment from "moment-timezone"; // 시간대 변환 라이브러리
+
 import cookieParser from "cookie-parser"; // 쿠키 파싱 미들웨어 추가
 import adminRoutes from "./admin"; // 관리자 전용 API
 import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; // 인증 미들웨어
@@ -36,7 +37,6 @@ const app = express();
 app.use(cors({ origin: `http://localhost:${FRONT_PORT}`, credentials: true })); // CORS 설정, credentials는 프론트와 백엔드의 쿠키 공유를 위해 필요
 app.use(express.json()); // JSON 요청을 처리하기 위한 미들웨어
 app.use(cookieParser()); // 쿠키 파싱 미들웨어 등록
-app.use(lusca.csrf()); // CSRF 보호 미들웨어 추가
 
 // MariaDB 연결
 export const db = MariaDB.createPool({
@@ -45,7 +45,7 @@ export const db = MariaDB.createPool({
   user: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
-  connectionLimit: 10,
+  connectionLimit: 30,  // 동시 접속자 수
   bigNumberStrings: true,
   dateStrings: false
 });
@@ -162,7 +162,10 @@ app.post("/users/login", (req: Request, res: Response) => {
             res.cookie("accessToken", accessToken, {
               httpOnly: true,
               secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
-              sameSite: "strict", // CSRF 방지
+              sameSite: "strict", // CSRF 방지 (strict, lax, none)
+              //strict : 같은 사이트에서만 쿠키 전송
+              //lax : GET 요청에서만 쿠키 전송
+              //none : 모든 요청에서 쿠키 전송 단 반드시 secure 속성이 true여야 함
               maxAge: 15 * 60 * 1000, // 15분
             });
 
@@ -170,6 +173,9 @@ app.post("/users/login", (req: Request, res: Response) => {
               httpOnly: true,
               secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
               sameSite: "strict", // CSRF 방지
+              //strict : 같은 사이트에서만 쿠키 전송
+              //lax : GET 요청에서만 쿠키 전송
+              //none : 모든 요청에서 쿠키 전송 단 반드시 secure 속성이 true여야 함
               maxAge: 7 * 24 * 60 * 60 * 1000, // 7일
             });
 
@@ -474,6 +480,10 @@ app.get("/reservations", limiter, authenticateToken, async (req: Request, res: R
 app.post("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId, seat_id, book_date } = req.body;
 
+  console.log("변환 전 Booking Date:", book_date);
+  const bookDateKST = moment.tz(book_date, "Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
+  console.log("변환된 Booking Date (KST):", bookDateKST);
+  
   let connection;
   try {
     connection = await db.getConnection(); // 데이터베이스 연결
@@ -509,7 +519,7 @@ app.post("/reservations", limiter, authenticateToken, async (req: Request, res: 
     // Step 4: 예약 생성
     const result = await connection.query(
       "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, ?, 'book')",
-      [userId, seat_id, book_date]
+      [userId, seat_id, bookDateKST]
     );
 
     // Step 5: 트랜잭션 커밋
@@ -603,23 +613,46 @@ app.get("/seats", limiter, authenticateToken, (req: Request, res: Response) => {
 
 // 이메일 인증 코드 전송 API 시작
 app.post("/users/verify-email", async (req: Request, res: Response) => {
-  const { email } = req.body;
+  const { email, id, purpose } = req.body; // 요청에 id 추가
 
-  if (!email) {
-    res.status(400).json({ success: false, message: "이메일 주소가 필요합니다." });
+  if (!email || !id) {
+    res.status(400).json({ success: false, message: "학번과 이메일 주소가 필요합니다." });
     return;
   }
 
   try {
     // Step 0: 이메일 상태 확인
-    const [existingUser] = await db.query("SELECT email, state FROM user WHERE email = ?", [email]);
+    const rows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
+    const user = rows[0];
 
-    if (existingUser) {
-      if (existingUser.state === "inactive") {
+    if (purpose === "resetPassword") {
+      // 비밀번호 재설정인 경우
+      if (!user) {
+        res.status(404).json({ success: false, message: "학번과 이메일이 일치하는 계정이 없습니다." });
+        return;
+      }
+
+      if (user.state === "inactive") {
         res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
         return;
       }
-      res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+    } else if (purpose === "verifyAccount") {
+      // 계정 인증인 경우 (회원가입)
+      const existingUserRows = await db.query("SELECT email, state FROM user WHERE email = ?", [email]);
+      const existingUser = existingUserRows[0];
+
+      if (existingUser) {
+        if (existingUser.state === "inactive") {
+          res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+          return;
+        }
+
+        res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+        return;
+      }
+    } else {
+      // purpose가 유효하지 않은 경우
+      res.status(400).json({ success: false, message: "잘못된 요청입니다." });
       return;
     }
 
@@ -671,11 +704,11 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
       message: "인증번호가 이메일로 발송되었습니다.",
     });
   } catch (err) {
-    console.error("Error sending email verification code:", err);
     res.status(500).json({ success: false, message: "메일 발송에 실패했습니다." });
   }
 });
- // 이메일 인증 코드 전송 API 끝
+// 이메일 인증 코드 전송 API 끝
+
 
 
 // 인증번호 검증 API 시작
@@ -725,6 +758,56 @@ app.post("/users/verify-code", async (req: Request, res: Response) => {
   }
 });
  // 인증번호 검증 API 끝
+
+
+ // 비밀번호 재설정 API 시작
+ app.patch("/users/password/reset", (req: Request, res: Response) => {
+  const { id, email, password } = req.body;
+
+  if (!id || !email || !password) {
+    res.status(400).json({
+      success: false,
+      message: "학번, 이메일, 비밀번호는 필수 입력 항목입니다.",
+    });
+    return;
+  }
+
+  // Step 1: 사용자 조회
+  db.query("SELECT * FROM user WHERE id = ? AND email = ?", [id, email])
+    .then((rows: any[]) => {
+      if (rows.length === 0) {
+        return Promise.reject({
+          status: 404,
+          message: "일치하는 사용자를 찾을 수 없습니다.",
+        });
+      }
+
+      // Step 2: 비밀번호 암호화
+      return bcrypt.hash(password, 10)
+      .then((hashedPassword) => {
+        return db.query("UPDATE user SET password = ? WHERE id = ?", [hashedPassword, id]);
+      });
+    })
+    .then(() => {
+      res.status(200).json({
+        success: true,
+        message: "비밀번호가 성공적으로 변경되었습니다.",
+      });
+    })
+    .catch((err) => {
+      if (err.status) {
+        res.status(err.status).json({ success: false, message: err.message });
+      } else {
+        console.error("비밀번호 변경 중 서버 오류:", err);
+        res.status(500).json({
+          success: false,
+          message: "비밀번호 변경 중 서버 오류가 발생했습니다.",
+        });
+      }
+    });
+});
+// 비밀번호 재설정 API 끝
+
 
 
 

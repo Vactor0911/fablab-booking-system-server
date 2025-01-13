@@ -13,7 +13,7 @@ export const authenticateToken = (req: Request, res: Response, next: NextFunctio
   const accessToken = req.cookies?.accessToken;
 
   if (!accessToken) {
-    res.status(401).json({
+    res.status(403).json({
       success: false,
       message: "Access Token이 필요합니다.",
     });
