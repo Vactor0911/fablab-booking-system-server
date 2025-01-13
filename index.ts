@@ -5,9 +5,18 @@ import dotenv from "dotenv"; // 환경 변수 사용한 민감한 정보 관리
 import bcrypt from "bcrypt"; // 비밀번호 암호화 최신버전
 import jwt from "jsonwebtoken";
 
+import lusca from "lusca"; // 보안 미들웨어
 import cookieParser from "cookie-parser"; // 쿠키 파싱 미들웨어 추가
 import adminRoutes from "./admin"; // 관리자 전용 API
 import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; // 인증 미들웨어
+
+import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
+
+// Rate Limit 설정
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 요청 횟수
+});
 
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
 
@@ -27,6 +36,7 @@ const app = express();
 app.use(cors({ origin: `http://localhost:${FRONT_PORT}`, credentials: true })); // CORS 설정, credentials는 프론트와 백엔드의 쿠키 공유를 위해 필요
 app.use(express.json()); // JSON 요청을 처리하기 위한 미들웨어
 app.use(cookieParser()); // 쿠키 파싱 미들웨어 등록
+app.use(lusca.csrf()); // CSRF 보호 미들웨어 추가
 
 // MariaDB 연결
 export const db = MariaDB.createPool({
@@ -392,7 +402,7 @@ app.post("/users/token/refresh", (req: Request, res: Response) => {
 // *** 토큰 재발급 API 끝 ***
 
 // *** 계정 탈퇴 API 시작 ***
-app.patch("/users/account", authenticateToken, (req: Request, res: Response) => {
+app.patch("/users/account", limiter, authenticateToken, (req: Request, res: Response) => {
   const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
 
   if (!userId) {
@@ -427,7 +437,7 @@ app.patch("/users/account", authenticateToken, (req: Request, res: Response) => 
 // *** 계정 탈퇴 API 끝 ***
 
 // 좌석 상태 확인 API 시작
-app.get("/reservations", authenticateToken, async (req: Request, res: Response) => {
+app.get("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
   let connection: any;
 
   try {
@@ -461,7 +471,7 @@ app.get("/reservations", authenticateToken, async (req: Request, res: Response) 
 
 
 // *** 좌석 예약 생성 API 시작 ***
-app.post("/reservations", authenticateToken, async (req: Request, res: Response) => {
+app.post("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId, seat_id, book_date } = req.body;
 
   let connection;
@@ -523,7 +533,7 @@ app.post("/reservations", authenticateToken, async (req: Request, res: Response)
 // *** 좌석 예약 생성 API 끝 ***
 
 // 좌석 퇴실 API 시작
-app.delete("/reservations", authenticateToken, async (req: Request, res: Response) => {
+app.delete("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId } = req.user; // 인증된 사용자 정보에서 userId 추출
 
   let connection: any;
@@ -572,7 +582,7 @@ app.delete("/reservations", authenticateToken, async (req: Request, res: Respons
 
 
 // 좌석 데이터 제공 API 시작
-app.get("/seats", authenticateToken, (req: Request, res: Response) => {
+app.get("/seats", limiter, authenticateToken, (req: Request, res: Response) => {
   db.query("SELECT * FROM seat")
     .then((rows: any) => {
       res.status(200).json({

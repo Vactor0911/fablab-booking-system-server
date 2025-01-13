@@ -3,11 +3,18 @@
 import express from "express";
 import { authenticateToken, authorizeAdmin } from "./middleware/authenticate";
 import { db } from "./index.ts";
+import RateLimit from "express-rate-limit";
+
+// Rate Limit 설정
+const limiter = RateLimit({
+  windowMs: 15 * 60 * 1000, // 15분
+  max: 100, // 요청 횟수
+});
 
 const router = express.Router();
 
 // 모든 예약 조회 (관리자 전용)
-router.get("/reservations", authenticateToken, authorizeAdmin, (req, res) => {
+router.get("/reservations", limiter, authenticateToken, authorizeAdmin, (req, res) => {
   db.query("SELECT * FROM book")
     .then((rows: any) => {
       res.status(200).json({ success: true, reservations: rows });
@@ -19,7 +26,7 @@ router.get("/reservations", authenticateToken, authorizeAdmin, (req, res) => {
 });
 
 // 특정 사용자 삭제 (관리자 전용)
-router.delete("/users/:userId", authenticateToken, authorizeAdmin, (req, res) => {
+router.delete("/users/:userId", limiter, authenticateToken, authorizeAdmin, (req, res) => {
   const { userId } = req.params;
 
   db.query("DELETE FROM user WHERE user_id = ?", [userId])
