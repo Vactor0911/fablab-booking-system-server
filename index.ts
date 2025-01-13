@@ -447,17 +447,30 @@ app.get("/reservations", authenticateToken, (req: Request, res: Response) => {
 app.post("/reservations", authenticateToken, (req: Request, res: Response) => {
   const { userId, seat_id, book_date } = req.body;
 
-  // Step 1: 좌석 존재 확인
-  db.query("SELECT * FROM seat WHERE seat_id = ?", [seat_id])
+  // Step 1: 사용자가 이미 예약한 상태인지 확인
+  db.query("SELECT * FROM book WHERE user_id = ? AND state = 'book'", [userId])
+    .then((rows: any) => {
+      if (rows.length > 0) {
+        // 사용자가 이미 예약한 경우
+        return Promise.reject({
+          status: 400,
+          message: "예약한 좌석이 존재합니다. 퇴실 후 다시 예약해주세요.",
+        });
+      }
+
+      // Step 2: 좌석 존재 확인
+      return db.query("SELECT * FROM seat WHERE seat_id = ?", [seat_id]);
+    })
     .then((rows: any) => {
       if (rows.length === 0) {
+        // 좌석이 존재하지 않는 경우
         return Promise.reject({
           status: 400,
           message: "존재하지 않는 좌석입니다.",
         });
       }
 
-      // Step 2: 좌석 예약 상태 확인
+      // Step 3: 좌석 예약 상태 확인
       return db.query(
         "SELECT * FROM book WHERE seat_id = ? AND state = 'book'",
         [seat_id]
@@ -465,13 +478,14 @@ app.post("/reservations", authenticateToken, (req: Request, res: Response) => {
     })
     .then((rows: any) => {
       if (rows.length > 0) {
+        // 해당 좌석이 이미 예약된 경우
         return Promise.reject({
           status: 400,
           message: "이미 예약된 좌석입니다.",
         });
       }
 
-      // Step 3: 예약 생성
+      // Step 4: 예약 생성
       return db.query(
         "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, ?, 'book')",
         [userId, seat_id, book_date]
@@ -500,6 +514,51 @@ app.post("/reservations", authenticateToken, (req: Request, res: Response) => {
     });
 });
 // *** 좌석 예약 생성 API 끝 ***
+
+// 좌석 퇴실 API 시작
+app.delete("/reservations", authenticateToken, (req: Request, res: Response) => {
+  const { userId } = req.user; // 인증된 사용자 정보에서 userId 추출
+
+  // Step 1: 해당 사용자의 예약 확인
+  db.query("SELECT * FROM book WHERE user_id = ? AND state = 'book'", [userId])
+    .then((rows: any) => {
+      if (rows.length === 0) {
+        // 사용자가 예약한 좌석이 없을 경우
+        return Promise.reject({
+          status: 400,
+          message: "현재 예약된 좌석이 없습니다.",
+        });
+      }
+
+      // Step 2: 예약 상태를 'end'로 업데이트
+      return db.query("UPDATE book SET state = 'end' WHERE user_id = ? AND state = 'book'", [userId]);
+    })
+    .then(() => {
+      // Step 3: 응답 반환
+      res.status(200).json({
+        success: true,
+        message: "좌석 퇴실 처리가 완료되었습니다.",
+      });
+    })
+    .catch((err) => {
+      if (err.status) {
+        // 사용자 정의 에러 처리
+        res.status(err.status).json({
+          success: false,
+          message: err.message,
+        });
+      } else {
+        console.error("좌석 퇴실 처리 중 오류 발생:", err);
+        res.status(500).json({
+          success: false,
+          message: "좌석 퇴실 처리 중 서버 오류가 발생했습니다.",
+        });
+      }
+    });
+});
+// 좌석 퇴실 API 끝
+
+
 
 // 좌석 데이터 제공 API 시작
 app.get("/seats", authenticateToken, (req: Request, res: Response) => {
