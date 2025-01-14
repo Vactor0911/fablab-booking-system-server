@@ -124,7 +124,7 @@ app.listen(PORT, "0.0.0.0", () => {
 
 // ----------------- API 라우트 -----------------
 
-// CSRF 토큰 전달 API 시작 *중요
+// CSRF 토큰 요청 API 시작 *중요
 app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
   try {
     res.json({ csrfToken: req.csrfToken?.() }); // csrfToken 메서드 사용
@@ -136,7 +136,7 @@ app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
     });
   }
 });
-// CSRF 토큰 전달 API 끝
+// CSRF 토큰 요청 API 끝
 
 // *** 로그인 API 시작 ***
 app.post("/users/login", (req: Request, res: Response) => {
