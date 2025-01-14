@@ -103,7 +103,7 @@ app.listen(PORT, "0.0.0.0", () => {
 
 // ----------------- API 라우트 -----------------
 
-// *** 사용자 로그인 API 시작 ***
+// *** 로그인 API 시작 ***
 app.post("/users/login", (req: Request, res: Response) => {
   const { id, password } = req.body;
 
@@ -206,11 +206,11 @@ app.post("/users/login", (req: Request, res: Response) => {
       }
     });
 });
-// *** 사용자 로그인 API 끝 ***
+// *** 로그인 API 끝 ***
 
 
 
-// *** 사용자 회원가입 API 시작 ***
+// *** 회원가입 API 시작 ***
 app.post("/users/register", (req: Request, res: Response) => {
   const { name, id, password, email } = req.body as {
     name: string;     // 이름
@@ -299,7 +299,7 @@ app.post("/users/register", (req: Request, res: Response) => {
       }
     });
 });
-// *** 사용자 회원가입 API 끝 ***
+// *** 회원가입 API 끝 ***
 
 
 // *** 로그아웃 API 시작 ***
@@ -620,11 +620,14 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
     return;
   }
 
+  let connection;
   try {
+    connection = await db.getConnection();
+    await connection.beginTransaction(); // 트랜잭션 시작
+
     switch (purpose) {
       case "resetPassword":
-        // Step 0: 이메일과 학번이 일치하는 계정 확인 (비밀번호 재설정)
-        const resetRows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
+        const resetRows = await connection.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
         const resetUser = resetRows[0];
 
         if (!resetUser) {
@@ -639,10 +642,9 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
         break;
 
       case "verifyAccount":
-        // 회원가입 요청
-        const studentRows = await db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name]);
+        const studentRows = await connection.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name]);
         const student = studentRows[0];
-      
+
         if (!student) {
           res.status(400).json({
             success: false,
@@ -650,23 +652,22 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
           });
           return;
         }
-      
-        // 사용자 정보 확인
-        const existingUserRows = await db.query("SELECT id, email, state FROM user WHERE id = ? OR email = ?", [id, email]);
+
+        const existingUserRows = await connection.query("SELECT id, email, state FROM user WHERE id = ? OR email = ?", [id, email]);
         const existingUser = existingUserRows[0];
-      
+
         if (existingUser) {
           if (existingUser.id === id) {
             res.status(400).json({ success: false, message: "이미 존재하는 학번입니다. 다른 학번을 사용해주세요." });
             return;
           }
-      
+
           if (existingUser.email === email) {
             if (existingUser.state === "inactive") {
               res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
               return;
             }
-      
+
             res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
             return;
           }
@@ -674,8 +675,7 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
         break;
 
       case "accountRecovery":
-        // 계정 복구 요청
-        const recoveryRows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
+        const recoveryRows = await connection.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
         const recoveryUser = recoveryRows[0];
 
         if (!recoveryUser) {
@@ -690,8 +690,7 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
         break;
 
       case "modifyInfo":
-        // 내 정보 수정 요청
-        const modifyRows = await db.query("SELECT id, email FROM user WHERE id = ?", [id]);
+        const modifyRows = await connection.query("SELECT id, email FROM user WHERE id = ?", [id]);
         const modifyUser = modifyRows[0];
 
         if (!modifyUser) {
@@ -722,7 +721,7 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
 
     // Step 2: 인증 코드 저장 (유효 기간 5분)
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5분 후
-    await db.query(
+    await connection.query(
       "INSERT INTO email_verification (email, verification_code, expires_at) VALUES (?, ?, ?)",
       [email, verificationCode, expiresAt]
     );
@@ -753,17 +752,20 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
 
     await transporter.sendMail(mailOptions);
 
+    await connection.commit(); // 트랜잭션 커밋
     res.status(200).json({
       success: true,
       message: "인증번호가 이메일로 발송되었습니다.",
     });
   } catch (err) {
+    if (connection) await connection.rollback(); // 트랜잭션 롤백
     console.error("Error sending email verification code:", err);
     res.status(500).json({ success: false, message: "메일 발송에 실패했습니다." });
+  } finally {
+    if (connection) connection.release();
   }
 });
 // 이메일 인증 코드 전송 API 끝
-
 
 
 
