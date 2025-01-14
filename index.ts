@@ -126,7 +126,15 @@ app.listen(PORT, "0.0.0.0", () => {
 
 // CSRF 토큰 전달 API 시작 *중요
 app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
-  res.json({ csrfToken: req.csrfToken?.() }); // csrfToken 메서드 사용
+  try {
+    res.json({ csrfToken: req.csrfToken?.() }); // csrfToken 메서드 사용
+  } catch (err) {
+    console.error("CSRF 토큰 생성 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "CSRF 토큰 생성 중 오류가 발생했습니다.",
+    });
+  }
 });
 // CSRF 토큰 전달 API 끝
 
@@ -994,7 +1002,7 @@ app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request
 
 
 // 사용자 정보 수정 API 시작
-app.patch("/users/modify", limiter, authenticateToken, (req: Request, res: Response) => {
+app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Request, res: Response) => {
   const { name, email, password, newpassword, isVerified } = req.body;
   const userId = req.user?.userId; // 인증된 사용자 ID
 
