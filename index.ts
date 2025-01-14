@@ -375,7 +375,7 @@ app.post("/users/logout", csrfProtection, (req: Request, res: Response) => {
 
 
 // *** 토큰 재발급 API 시작 ***
-app.post("/users/token/refresh", (req: Request, res: Response) => {
+app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) => {
   const { refreshToken } = req.cookies; // 쿠키에서 Refresh Token 추출
 
   if (!refreshToken) {
