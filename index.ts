@@ -578,7 +578,7 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
 // *** 좌석 예약 생성 API 끝 ***
 
 // 좌석 퇴실 API 시작
-app.delete("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
+app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId } = req.user; // 인증된 사용자 정보에서 userId 추출
 
   let connection: any;
