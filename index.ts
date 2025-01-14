@@ -512,7 +512,7 @@ app.get("/reservations", limiter, authenticateToken, async (req: Request, res: R
 
 
 // *** 좌석 예약 생성 API 시작 ***
-app.post("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
+app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId, seat_id, book_date } = req.body;
 
   console.log("변환 전 Booking Date:", book_date);
