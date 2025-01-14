@@ -949,7 +949,7 @@ app.patch("/users/account/recovery", (req: Request, res: Response) => {
 
 
 // 사용자 정보 제공 API 시작
-app.get("/users/info", limiter, authenticateToken, (req: Request, res: Response) => {
+app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request, res: Response) => {
   const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
 
   if (!userId) {
