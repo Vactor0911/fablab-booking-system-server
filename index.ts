@@ -12,6 +12,14 @@ import adminRoutes from "./admin"; // 관리자 전용 API
 import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; // 인증 미들웨어
 
 import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
+import csurf from "csurf";
+
+// Request 타입 확장
+declare module "express" {
+  export interface Request {
+    csrfToken?: () => string; // csrfToken 메서드 정의
+  }
+}
 
 // Rate Limit 설정
 const limiter = rateLimit({
@@ -37,6 +45,18 @@ const app = express();
 app.use(cors({ origin: `http://localhost:${FRONT_PORT}`, credentials: true })); // CORS 설정, credentials는 프론트와 백엔드의 쿠키 공유를 위해 필요
 app.use(express.json()); // JSON 요청을 처리하기 위한 미들웨어
 app.use(cookieParser()); // 쿠키 파싱 미들웨어 등록
+
+// CSRF 미들웨어 초기화
+// 원하는 경로에만 csrfProtection를 추가
+// 예시 app.post("/users/logout", csrfProtection, (req: Request, res: Response) => {
+const csrfProtection = csurf({
+  cookie: {
+    httpOnly: true,
+    secure: false, // HTTPS 환경에서는 true로 설정
+    sameSite: "strict", // CSRF 보호를 위한 설정
+  },
+});
+
 
 // MariaDB 연결
 export const db = MariaDB.createPool({
@@ -101,7 +121,14 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`서버가 ${PORT}번 포트에서 실행 중입니다.`);
 });
 
+
 // ----------------- API 라우트 -----------------
+
+// CSRF 토큰 전달 API 시작 *중요
+app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
+  res.json({ csrfToken: req.csrfToken?.() }); // csrfToken 메서드 사용
+});
+// CSRF 토큰 전달 API 끝
 
 // *** 로그인 API 시작 ***
 app.post("/users/login", (req: Request, res: Response) => {
@@ -162,7 +189,7 @@ app.post("/users/login", (req: Request, res: Response) => {
             res.cookie("accessToken", accessToken, {
               httpOnly: true,
               secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
-              sameSite: "strict", // CSRF 방지 (strict, lax, none)
+              sameSite: "strict", // CSRF 방지 (strict, lax, none) -> 이거 사용보다 그냥 CSRF 토큰 사용하는게 더 안전 -> 따라서 적용
               //strict : 같은 사이트에서만 쿠키 전송
               //lax : GET 요청에서만 쿠키 전송
               //none : 모든 요청에서 쿠키 전송 단 반드시 secure 속성이 true여야 함
@@ -172,7 +199,7 @@ app.post("/users/login", (req: Request, res: Response) => {
             res.cookie("refreshToken", refreshToken, {
               httpOnly: true,
               secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
-              sameSite: "strict", // CSRF 방지
+              sameSite: "strict", // CSRF 방지 -> 이거 사용보다 그냥 CSRF 토큰 사용하는게 더 안전 -> 따라서 적용
               //strict : 같은 사이트에서만 쿠키 전송
               //lax : GET 요청에서만 쿠키 전송
               //none : 모든 요청에서 쿠키 전송 단 반드시 secure 속성이 true여야 함
@@ -303,7 +330,7 @@ app.post("/users/register", (req: Request, res: Response) => {
 
 
 // *** 로그아웃 API 시작 ***
-app.post("/users/logout", (req: Request, res: Response) => {
+app.post("/users/logout", csrfProtection, (req: Request, res: Response) => {
   const { refreshToken } = req.cookies; // 쿠키에서 Refresh Token 추출
 
   if (!refreshToken) {
@@ -408,7 +435,7 @@ app.post("/users/token/refresh", (req: Request, res: Response) => {
 // *** 토큰 재발급 API 끝 ***
 
 // *** 계정 탈퇴 API 시작 ***
-app.patch("/users/account", limiter, authenticateToken, (req: Request, res: Response) => {
+app.patch("/users/account",csrfProtection, limiter,  authenticateToken, (req: Request, res: Response) => {
   const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
 
   if (!userId) {
@@ -1046,3 +1073,6 @@ app.patch("/users/modify", limiter, authenticateToken, (req: Request, res: Respo
     });
 });
 // 사용자 정보 수정 API 끝
+
+
+
