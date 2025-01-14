@@ -621,75 +621,93 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
   }
 
   try {
-    if (purpose === "resetPassword") {
-      // Step 0: 이메일과 학번이 일치하는 계정 확인 (비밀번호 재설정)
-      const rows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
-      const user = rows[0];
+    switch (purpose) {
+      case "resetPassword":
+        // Step 0: 이메일과 학번이 일치하는 계정 확인 (비밀번호 재설정)
+        const resetRows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
+        const resetUser = resetRows[0];
 
-      if (!user) {
-        res.status(404).json({ success: false, message: "학번과 이메일이 일치하는 계정이 없습니다." });
-        return;
-      }
-
-      if (user.state === "inactive") {
-        res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
-        return;
-      }
-    } 
-    else if (purpose === "verifyAccount") {
-      // 회원가입 요청
-    
-      // Step 1: 학생 정보가 존재하는지 확인
-      const studentRows = await db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name]);
-      const student = studentRows[0];
-    
-      if (!student) {
-        res.status(400).json({
-          success: false,
-          message: "해당 학번과 이름에 맞는 학생 정보를 찾을 수 없습니다. 관리자에게 문의하세요.",
-        });
-        return;
-      }
-    
-      // Step 2: 사용자 정보 확인
-      const existingUserRows = await db.query("SELECT id, email, state FROM user WHERE id = ? OR email = ?", [id, email]);
-      const existingUser = existingUserRows[0];
-    
-      if (existingUser) {
-        if (existingUser.id === id) {
-          res.status(400).json({ success: false, message: "이미 존재하는 학번입니다. 다른 학번을 사용해주세요." });
+        if (!resetUser) {
+          res.status(404).json({ success: false, message: "학번과 이메일이 일치하는 계정이 없습니다." });
           return;
         }
-    
-        if (existingUser.email === email) {
-          if (existingUser.state === "inactive") {
-            res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+
+        if (resetUser.state === "inactive") {
+          res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+          return;
+        }
+        break;
+
+      case "verifyAccount":
+        // 회원가입 요청
+        const studentRows = await db.query("SELECT student_id FROM student WHERE student_id = ? AND name = ?", [id, name]);
+        const student = studentRows[0];
+      
+        if (!student) {
+          res.status(400).json({
+            success: false,
+            message: "해당 학번과 이름에 맞는 학생 정보를 찾을 수 없습니다. 관리자에게 문의하세요.",
+          });
+          return;
+        }
+      
+        // 사용자 정보 확인
+        const existingUserRows = await db.query("SELECT id, email, state FROM user WHERE id = ? OR email = ?", [id, email]);
+        const existingUser = existingUserRows[0];
+      
+        if (existingUser) {
+          if (existingUser.id === id) {
+            res.status(400).json({ success: false, message: "이미 존재하는 학번입니다. 다른 학번을 사용해주세요." });
             return;
           }
-    
-          res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+      
+          if (existingUser.email === email) {
+            if (existingUser.state === "inactive") {
+              res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+              return;
+            }
+      
+            res.status(400).json({ success: false, message: "이미 존재하는 이메일입니다. 다른 이메일을 사용해주세요." });
+            return;
+          }
+        }
+        break;
+
+      case "accountRecovery":
+        // 계정 복구 요청
+        const recoveryRows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
+        const recoveryUser = recoveryRows[0];
+
+        if (!recoveryUser) {
+          res.status(404).json({ success: false, message: "학번과 이메일이 일치하는 계정이 없습니다." });
           return;
         }
-      }
-    }
-    else if (purpose === "accountRecovery") {
-      // 계정 복구 요청
-      const rows = await db.query("SELECT id, email, state FROM user WHERE id = ? AND email = ?", [id, email]);
-      const user = rows[0];
 
-      if (!user) {
-        res.status(404).json({ success: false, message: "학번과 이메일이 일치하는 계정이 없습니다." });
-        return;
-      }
+        if (recoveryUser.state !== "inactive") {
+          res.status(400).json({ success: false, message: "이미 활성화된 계정입니다." });
+          return;
+        }
+        break;
 
-      if (user.state !== "inactive") {
-        res.status(400).json({ success: false, message: "이미 활성화된 계정입니다." });
+      case "modifyInfo":
+        // 내 정보 수정 요청
+        const modifyRows = await db.query("SELECT id, email FROM user WHERE id = ?", [id]);
+        const modifyUser = modifyRows[0];
+
+        if (!modifyUser) {
+          res.status(404).json({ success: false, message: "해당 학번과 일치하는 계정을 찾을 수 없습니다." });
+          return;
+        }
+
+        if (modifyUser.email === email) {
+          res.status(400).json({ success: false, message: "현재 이메일과 동일한 값입니다. 변경할 이메일을 입력해주세요." });
+          return;
+        }
+        break;
+
+      default:
+        res.status(400).json({ success: false, message: "잘못된 요청입니다." });
         return;
-      }
-    } else {
-      // 유효하지 않은 purpose
-      res.status(400).json({ success: false, message: "잘못된 요청입니다." });
-      return;
     }
 
     // Step 1: 랜덤 인증 코드 생성
@@ -745,6 +763,7 @@ app.post("/users/verify-email", async (req: Request, res: Response) => {
   }
 });
 // 이메일 인증 코드 전송 API 끝
+
 
 
 
@@ -900,6 +919,128 @@ app.patch("/users/account/recovery", (req: Request, res: Response) => {
 // 계정 복구 API 끝
 
 
+// 사용자 정보 제공 API 시작
+app.get("/users/info", limiter, authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
+
+  if (!userId) {
+    res.status(403).json({
+      success: false,
+      message: "인증된 사용자가 아닙니다.",
+    });
+    return;
+  }
+
+  // DB에서 사용자 정보 조회
+  db.query("SELECT id, name, email FROM user WHERE user_id = ?", [userId])
+    .then((rows: any[]) => {
+      if (rows.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "사용자 정보를 찾을 수 없습니다.",
+        });
+        return;
+      }
+
+      // 사용자 정보 반환
+      const user = rows[0];
+      res.status(200).json({
+        success: true,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+        },
+      });
+    })
+    .catch((err) => {
+      console.error("사용자 정보 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "사용자 정보 조회 중 서버 오류가 발생했습니다.",
+      });
+    });
+});
+// 사용자 정보 제공 API 끝
 
 
+// 사용자 정보 수정 API 시작
+app.patch("/users/modify", limiter, authenticateToken, (req: Request, res: Response) => {
+  const { name, email, password, newpassword, isVerified } = req.body;
+  const userId = req.user?.userId; // 인증된 사용자 ID
 
+  if (!userId || !name || !email) {
+    res.status(400).json({
+      success: false,
+      message: "필수 정보가 누락되었습니다.",
+    });
+    return;
+  }
+
+  // Step 1: 사용자 정보 조회
+  db.query("SELECT email, password FROM user WHERE user_id = ?", [userId])
+    .then((rows: any[]) => {
+      if (rows.length === 0) {
+        return Promise.reject({
+          status: 404,
+          message: "사용자 정보를 찾을 수 없습니다.",
+        });
+      }
+
+      const user = rows[0];
+
+      // Step 2: 이메일 변경 검증
+      if (email !== user.email && !isVerified) {
+        return Promise.reject({
+          status: 400,
+          message: "이메일 변경 시 인증이 필요합니다.",
+        });
+      }
+
+      // Step 3: 비밀번호 변경 검증
+      if (newpassword) {
+        return bcrypt.compare(password, user.password).then((isPasswordMatch) => {
+          if (!isPasswordMatch) {
+            return Promise.reject({
+              status: 400,
+              message: "현재 비밀번호가 일치하지 않습니다.",
+            });
+          }
+
+          // 비밀번호 해싱
+          return bcrypt.hash(newpassword, 10).then((hashedPassword) => {
+            return db.query("UPDATE user SET password = ? WHERE user_id = ?", [hashedPassword, userId]);
+          });
+        });
+      }
+      return Promise.resolve();
+    })
+    .then(() => {
+      // Step 4: 이메일 및 이름 변경
+      if (email || name) {
+        return db.query("UPDATE user SET email = ?, name = ? WHERE user_id = ?", [email, name, userId]);
+      }
+      return Promise.resolve();
+    })
+    .then(() => {
+      res.status(200).json({
+        success: true,
+        message: "사용자 정보가 성공적으로 수정되었습니다.",
+      });
+    })
+    .catch((err) => {
+      if (err.status) {
+        res.status(err.status).json({
+          success: false,
+          message: err.message,
+        });
+      } else {
+        console.error("사용자 정보 수정 중 오류 발생:", err);
+        res.status(500).json({
+          success: false,
+          message: "사용자 정보 수정 중 서버 오류가 발생했습니다.",
+        });
+      }
+    });
+});
+// 사용자 정보 수정 API 끝
