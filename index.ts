@@ -254,7 +254,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
 
 
 // *** 회원가입 API 시작 ***
-app.post("/users/register", (req: Request, res: Response) => {
+app.post("/users/register", csrfProtection, (req: Request, res: Response) => {
   const { name, id, password, email } = req.body as {
     name: string;     // 이름
     id: string;       // 아이디(학번)
