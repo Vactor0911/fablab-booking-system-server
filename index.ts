@@ -57,6 +57,14 @@ const csrfProtection = csurf({
   },
 });
 
+// // 추가로 모든 POST, PATCH, PUT, DELETE에 적용하고 싶으면 미들웨어를 전역으로 추가 가능
+// app.use((req: Request, res: Response, next: NextFunction) => {
+//   if (["POST", "PATCH", "PUT", "DELETE"].includes(req.method)) {
+//     return csrfProtection(req, res, next);
+//   }
+//   next();
+// });
+
 
 // MariaDB 연결
 export const db = MariaDB.createPool({
@@ -139,7 +147,7 @@ app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
 // CSRF 토큰 요청 API 끝
 
 // *** 로그인 API 시작 ***
-app.post("/users/login", (req: Request, res: Response) => {
+app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
   const { id, password } = req.body;
 
   // Step 0: 탈퇴된 계정인지 확인
