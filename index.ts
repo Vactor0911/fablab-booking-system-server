@@ -873,7 +873,7 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
 
 
 
- // 비밀번호 재설정 API 시작
+ // 비밀번호 찾기 API 시작
  app.patch("/users/password/reset", csrfProtection, (req: Request, res: Response) => {
   const { id, email, password } = req.body;
 
@@ -919,7 +919,7 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
       }
     });
 });
-// 비밀번호 재설정 API 끝
+// 비밀번호 찾기 API 끝
 
 
 
