@@ -924,7 +924,7 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
 
 
 // 계정 복구 API 시작
-app.patch("/users/account/recovery", (req: Request, res: Response) => {
+app.patch("/users/account/recovery", csrfProtection, (req: Request, res: Response) => {
   const { id, email } = req.body;
 
   if (!id || !email) {
