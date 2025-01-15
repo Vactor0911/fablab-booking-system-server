@@ -874,7 +874,7 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
 
 
  // 비밀번호 재설정 API 시작
- app.patch("/users/password/reset", (req: Request, res: Response) => {
+ app.patch("/users/password/reset", csrfProtection, (req: Request, res: Response) => {
   const { id, email, password } = req.body;
 
   if (!id || !email || !password) {
