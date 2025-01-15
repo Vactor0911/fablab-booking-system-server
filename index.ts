@@ -655,7 +655,7 @@ app.get("/seats", limiter, authenticateToken, (req: Request, res: Response) => {
 
 
 // 이메일 인증 코드 전송 API 시작
-app.post("/users/verify-email", async (req: Request, res: Response) => {
+app.post("/users/verify-email", csrfProtection, async (req: Request, res: Response) => {
   const { email, id, purpose, name = "" } = req.body; // 요청에 id 추가, name은 선택적
 
   if (!email || !id) {
