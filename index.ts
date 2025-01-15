@@ -146,6 +146,8 @@ app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
 });
 // CSRF 토큰 요청 API 끝
 
+
+
 // *** 로그인 API 시작 ***
 app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
   const { id, password } = req.body;
@@ -345,6 +347,7 @@ app.post("/users/register", csrfProtection, (req: Request, res: Response) => {
 // *** 회원가입 API 끝 ***
 
 
+
 // *** 로그아웃 API 시작 ***
 app.post("/users/logout", csrfProtection, (req: Request, res: Response) => {
   const { refreshToken } = req.cookies; // 쿠키에서 Refresh Token 추출
@@ -388,6 +391,7 @@ app.post("/users/logout", csrfProtection, (req: Request, res: Response) => {
     });
 });
 // *** 로그아웃 API 끝 ***
+
 
 
 // *** 토큰 재발급 API 시작 ***
@@ -450,6 +454,8 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
 });
 // *** 토큰 재발급 API 끝 ***
 
+
+
 // *** 계정 탈퇴 API 시작 ***
 app.patch("/users/account",csrfProtection, limiter,  authenticateToken, (req: Request, res: Response) => {
   const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
@@ -484,6 +490,8 @@ app.patch("/users/account",csrfProtection, limiter,  authenticateToken, (req: Re
     });
 });
 // *** 계정 탈퇴 API 끝 ***
+
+
 
 // 좌석 상태 확인 API 시작
 app.get("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
@@ -585,6 +593,8 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
 });
 // *** 좌석 예약 생성 API 끝 ***
 
+
+
 // 좌석 퇴실 API 시작
 app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId } = req.user; // 인증된 사용자 정보에서 userId 추출
@@ -652,6 +662,7 @@ app.get("/seats", limiter, authenticateToken, (req: Request, res: Response) => {
     });
 });
 // 좌석 데이터 제공 API 끝
+
 
 
 // 이메일 인증 코드 전송 API 시작
@@ -813,7 +824,7 @@ app.post("/users/verify-email", csrfProtection, async (req: Request, res: Respon
 
 
 // 인증번호 검증 API 시작
-app.post("/users/verify-code", async (req: Request, res: Response) => {
+app.post("/users/verify-code", csrfProtection, async (req: Request, res: Response) => {
   const { email, code } = req.body;
 
   if (!email) {
@@ -859,6 +870,7 @@ app.post("/users/verify-code", async (req: Request, res: Response) => {
   }
 });
  // 인증번호 검증 API 끝
+
 
 
  // 비밀번호 재설정 API 시작
@@ -908,6 +920,8 @@ app.post("/users/verify-code", async (req: Request, res: Response) => {
     });
 });
 // 비밀번호 재설정 API 끝
+
+
 
 // 계정 복구 API 시작
 app.patch("/users/account/recovery", (req: Request, res: Response) => {
@@ -964,6 +978,7 @@ app.patch("/users/account/recovery", (req: Request, res: Response) => {
 // 계정 복구 API 끝
 
 
+
 // 사용자 정보 제공 API 시작
 app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request, res: Response) => {
   const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
@@ -1007,6 +1022,7 @@ app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request
     });
 });
 // 사용자 정보 제공 API 끝
+
 
 
 // 사용자 정보 수정 API 시작
