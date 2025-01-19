@@ -1189,4 +1189,48 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
 // 사용자 정보 수정 API 끝
 
 
+// 예약 정보 조회 API 시작
+app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.userId; // 인증된 사용자 ID
+  
+  if (!userId) {
+      res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
+      return;
+  }
+
+  db.query(
+      `
+      SELECT 
+          b.book_id,
+          b.book_date,
+          b.state,
+          s.name AS seat_name,
+          r.reason AS cancel_reason
+      FROM 
+          book b
+      LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+      LEFT JOIN 
+          book_restriction r ON b.seat_id = r.seat_id
+      WHERE 
+          b.user_id = ?
+      ORDER BY 
+          b.book_date DESC
+      `,
+      [userId]
+  )
+  .then((rows: any[]) => {
+      res.status(200).json({ success: true, reservations: rows });
+  })
+  .catch((err: any) => {
+      console.error("예약 정보 조회 중 오류 발생:", err);
+      res.status(500).json({
+          success: false,
+          message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
+      });
+  });
+});
+// 예약 정보 조회 API 끝
+
+
 
