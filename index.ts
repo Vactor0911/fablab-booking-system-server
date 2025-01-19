@@ -559,6 +559,11 @@ app.get("/reservations", limiter, authenticateToken, async (req: Request, res: R
 app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId, seat_id, book_date } = req.body;
 
+  if (!Number.isInteger(seat_id) || seat_id <= 0) {
+    res.status(400).json({ success: false, message: "유효하지 않은 좌석 ID입니다." });
+    return;
+  }
+
   console.log("변환 전 Booking Date:", book_date);
   const bookDateKST = moment.tz(book_date, "Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
   console.log("변환된 Booking Date (KST):", bookDateKST);
