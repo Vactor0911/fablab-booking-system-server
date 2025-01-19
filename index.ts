@@ -281,13 +281,12 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
   };
 
   
-
-  if (!nameRegex.test(name)) {
-    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
-    return;
-  }
   if (!idRegex.test(id)) {
     res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
+  if (!nameRegex.test(name)) {
+    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
     return;
   }
   if (!emailRegex.test(email)) {
@@ -1099,6 +1098,22 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
     });
     return;
   }
+  if (!nameRegex.test(name)) { 
+    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다.", });
+    return;
+  }
+  if (!emailRegex.test(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요.", });
+    return;
+  }
+  // if (!passwordRegex.test(password)) {
+  //   res.status(400).json({ success: false, message: "비밀번호는 영문, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.", });
+  //   return;
+  // }
+  // if (!passwordRegex.test(newpassword)) {
+  //   res.status(400).json({ success: false, message: "새 비밀번호는 영문, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.", });
+  //   return;
+  // }
 
   // Step 1: 사용자 정보 조회
   db.query("SELECT email, password FROM user WHERE user_id = ?", [userId])
