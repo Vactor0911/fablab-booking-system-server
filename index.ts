@@ -1233,4 +1233,107 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
 // 예약 정보 조회 API 끝
 
 
+// 공지사항 목록 조회 API 시작
+app.get("/notice", limiter, (req: Request, res: Response) => {
+  const query = `
+    SELECT 
+      notice_id, 
+      title, 
+      DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
+      views 
+    FROM notice 
+    ORDER BY date DESC`;
+
+  db.query(query)
+    .then((rows) => {
+      res.status(200).json({
+        success: true,
+        notices: rows.map((row) => ({
+          notice_id: row.notice_id,
+          title: row.title,
+          date: row.formatted_date,
+          views: row.views,
+        })),
+      });
+    })
+    .catch((err) => {
+      console.error("공지사항 데이터 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "공지사항 데이터를 가져오는 중 오류가 발생했습니다.",
+      });
+    });
+});
+// 공지사항 목록 조회 API 끝
+
+
+// 공지사항 내용 조회 API 시작
+app.get("/notice/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const query = `
+      SELECT 
+        n.notice_id, 
+        n.title, 
+        n.content, 
+        n.date, 
+        u.name AS author_name, 
+        n.views
+      FROM notice n
+      LEFT JOIN user u ON n.admin_id = u.user_id
+      WHERE n.notice_id = ?
+    `;
+
+    const [notice] = await db.query(query, [id]);
+
+    if (!notice) {
+      res.status(404).json({ message: "공지사항을 찾을 수 없습니다." });
+      return;
+    }
+
+    res.json({ notice });
+  } catch (err) {
+    console.error("공지사항 조회 중 오류 발생:", err);
+    res.status(500).json({ message: "공지사항 데이터를 가져오는 중 오류가 발생했습니다." });
+  }
+});
+// 공지사항 내용 조회 API 끝
+
+
+// 공지사항 조회수 증가 API 시작
+app.patch("/notice/:id/increment-views", csrfProtection, limiter, async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    // 조회수 증가 트랜잭션 시작
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // 조회수 증가
+    const result = await connection.query(
+      "UPDATE notice SET views = views + 1 WHERE notice_id = ?",
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      await connection.rollback();
+      res.status(404).json({ message: "공지사항을 찾을 수 없습니다." });
+      return;
+    }
+
+    // 트랜잭션 커밋
+    await connection.commit();
+    connection.release();
+
+    res.status(200).json({ message: "조회수가 증가했습니다." });
+  } catch (err) {
+    console.error("조회수 증가 처리 중 오류 발생:", err);
+    res.status(500).json({ message: "조회수 증가 처리 중 오류가 발생했습니다." });
+  }
+});
+// 공지사항 조회수 증가 API 끝
+
+
+
 
