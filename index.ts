@@ -13,6 +13,7 @@ import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; /
 
 import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
 import csurf from "csurf";
+import validator from "validator"; // 유효성 검사 라이브러리
 
 // Request 타입 확장
 declare module "express" {
@@ -129,14 +130,6 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`서버가 ${PORT}번 포트에서 실행 중입니다.`);
 });
 
-
-// 입력값 검증 기준 시작
-const nameRegex = /^[가-힣a-zA-Z\s]{2,30}$/; // 한글, 영문, 공백 허용 (2~30자)
-const idRegex = /^\d{7,10}$/; // 숫자 7~10자리
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // 간단한 이메일 검증
-const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/; // 최소 8자, 영문/숫자/특수문자 포함
-const codeRegex = /^\d{6}$/; // 6자리 숫자
-// 입력값 검증 기준 끝
 
 // ----------------- API 라우트 -----------------
 
@@ -281,22 +274,26 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
   };
 
   
-  if (!idRegex.test(id)) {
-    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
-    return;
-  }
-  if (!nameRegex.test(name)) {
+  // 입력값 검증
+  if (!validator.isLength(name, { min: 2, max: 30 }) || !/^[가-힣a-zA-Z\s]+$/.test(name)) {
     res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
     return;
   }
-  if (!emailRegex.test(email)) {
+
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
+
+  if (!validator.isEmail(email)) {
     res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
-  // if (!passwordRegex.test(password)) {
+
+  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
   //   res.status(400).json({
   //     success: false,
-  //     message: "비밀번호는 영문, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.",
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
   //   });
   //   return;
   // }
@@ -706,6 +703,15 @@ app.post("/users/verify-email", csrfProtection, async (req: Request, res: Respon
     res.status(400).json({ success: false, message: "학번과 이메일 주소가 필요합니다." });
     return;
   }
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
 
   let connection;
   try {
@@ -868,12 +874,12 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     res.status(400).json({ success: false, message: "인증번호를 입력해주세요." });
     return;
   }
-  if (!emailRegex.test(email)) {
+  if (!validator.isEmail(email)) {
     res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
-  if(!codeRegex.test(code)) {
-    res.status(400).json({ success: false, message: "인증번호는 6자리 숫자로 입력해주세요." });
+  if (!validator.isNumeric(code, { no_symbols: true }) || code.length !== 6) {
+    res.status(400).json({ success: false, message: "인증 코드는 6자리 숫자입니다." });
     return;
   }
 
@@ -926,18 +932,20 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     return;
   }
 
-  if (!idRegex.test(id)) {
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
     res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
     return;
   }
-  if (!emailRegex.test(email)) {
+
+  if (!validator.isEmail(email)) {
     res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
-  // if (!passwordRegex.test(password)) {
+
+  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
   //   res.status(400).json({
   //     success: false,
-  //     message: "비밀번호는 영문, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.",
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
   //   });
   //   return;
   // }
@@ -992,11 +1000,12 @@ app.patch("/users/account/recovery", csrfProtection, (req: Request, res: Respons
     });
     return;
   }
-  if (!idRegex.test(id)) {
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
     res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
     return;
   }
-  if (!emailRegex.test(email)) {
+
+  if (!validator.isEmail(email)) {
     res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
@@ -1103,22 +1112,35 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
     });
     return;
   }
-  if (!nameRegex.test(name)) { 
-    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다.", });
+  if (!validator.isLength(name, { min: 2, max: 30 }) || !/^[가-힣a-zA-Z\s]+$/.test(name)) {
+    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
     return;
   }
-  if (!emailRegex.test(email)) {
-    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요.", });
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
-  // if (!passwordRegex.test(password)) {
-  //   res.status(400).json({ success: false, message: "비밀번호는 영문, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.", });
-  //   return;
-  // }
-  // if (!passwordRegex.test(newpassword)) {
-  //   res.status(400).json({ success: false, message: "새 비밀번호는 영문, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.", });
-  //   return;
-  // }
+  if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+    });
+    return;
+  }
+  if (!validator.isStrongPassword(newpassword, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+    });
+    return;
+  }
+  if (password === newpassword) {
+    res.status(400).json({
+      success: false,
+      message: "새 비밀번호는 이전 비밀번호와 동일할 수 없습니다.",
+    });
+    return;
+  }
 
   // Step 1: 사용자 정보 조회
   db.query("SELECT email, password FROM user WHERE user_id = ?", [userId])

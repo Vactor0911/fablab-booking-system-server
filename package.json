@@ -24,6 +24,7 @@
         "mariadb": "^3.4.0",
         "moment-timezone": "^0.5.46",
         "nodemailer": "^6.9.16",
+        "validator": "^13.12.0",
         "vite-node": "^2.1.5"
     },
     "devDependencies": {
