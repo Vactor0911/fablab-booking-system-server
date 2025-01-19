@@ -988,6 +988,14 @@ app.patch("/users/account/recovery", csrfProtection, (req: Request, res: Respons
     });
     return;
   }
+  if (!idRegex.test(id)) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
+  if (!emailRegex.test(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
 
   // Step 1: 학번과 이메일이 일치하는 계정 확인
   db.query("SELECT * FROM user WHERE id = ? AND email = ?", [id, email])
