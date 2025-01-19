@@ -130,6 +130,13 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 
+// 입력값 검증 기준 시작
+const nameRegex = /^[가-힣a-zA-Z\s]{2,30}$/; // 한글, 영문, 공백 허용 (2~30자)
+const idRegex = /^\d{7,10}$/; // 숫자 7~10자리
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // 간단한 이메일 검증
+const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/; // 최소 8자, 영문/숫자/특수문자 포함
+// 입력값 검증 기준 끝
+
 // ----------------- API 라우트 -----------------
 
 // CSRF 토큰 요청 API 시작 *중요
@@ -272,10 +279,7 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
     email: string;    // 이메일
   };
 
-  const nameRegex = /^[가-힣a-zA-Z\s]{2,30}$/; // 한글, 영문, 공백 허용 (2~30자)
-  const idRegex = /^\d{7,10}$/; // 숫자 7~10자리
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // 간단한 이메일 검증
-  const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/; // 최소 8자, 영문/숫자/특수문자 포함
+  
 
   if (!nameRegex.test(name)) {
     res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
@@ -908,6 +912,23 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     });
     return;
   }
+  
+  if (!idRegex.test(id)) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
+  if (!emailRegex.test(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+  // if (!passwordRegex.test(password)) {
+  //   res.status(400).json({
+  //     success: false,
+  //     message: "비밀번호는 영문, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.",
+  //   });
+  //   return;
+  // }
+
 
   // Step 1: 사용자 조회
   db.query("SELECT * FROM user WHERE id = ? AND email = ?", [id, email])
