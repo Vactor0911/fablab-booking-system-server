@@ -135,6 +135,7 @@ const nameRegex = /^[가-힣a-zA-Z\s]{2,30}$/; // 한글, 영문, 공백 허용 
 const idRegex = /^\d{7,10}$/; // 숫자 7~10자리
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // 간단한 이메일 검증
 const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/; // 최소 8자, 영문/숫자/특수문자 포함
+const codeRegex = /^\d{6}$/; // 6자리 숫자
 // 입력값 검증 기준 끝
 
 // ----------------- API 라우트 -----------------
@@ -863,6 +864,14 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     res.status(400).json({ success: false, message: "인증번호를 입력해주세요." });
     return;
   }
+  if (!emailRegex.test(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+  if(!codeRegex.test(code)) {
+    res.status(400).json({ success: false, message: "인증번호는 6자리 숫자로 입력해주세요." });
+    return;
+  }
 
   try {
     // 인증 코드 검증
@@ -912,7 +921,7 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     });
     return;
   }
-  
+
   if (!idRegex.test(id)) {
     res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
     return;
