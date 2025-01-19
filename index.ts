@@ -13,6 +13,7 @@ import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; /
 
 import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
 import csurf from "csurf";
+import validator from "validator"; // 유효성 검사 라이브러리
 
 // Request 타입 확장
 declare module "express" {
@@ -152,6 +153,14 @@ app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
 app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
   const { id, password } = req.body;
 
+  if (!/^\d{7,10}$/.test(id)) { // 학번은 숫자 7~10자리
+    res.status(400).json({
+        success: false,
+        message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다.",
+    });
+    return;
+  }
+
   // Step 0: 탈퇴된 계정인지 확인
   db.query("SELECT id, state FROM user WHERE id = ?", [id])
     .then((rows: any) => {
@@ -256,7 +265,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
 
 
 // *** 회원가입 API 시작 ***
-app.post("/users/register", csrfProtection, (req: Request, res: Response) => {
+app.post("/users/register", csrfProtection, limiter, (req: Request, res: Response) => {
   const { name, id, password, email } = req.body as {
     name: string;     // 이름
     id: string;       // 아이디(학번)
@@ -264,15 +273,31 @@ app.post("/users/register", csrfProtection, (req: Request, res: Response) => {
     email: string;    // 이메일
   };
 
-  // // 비밀번호 조건 검증
-  // const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*])[A-Za-z\d!@#$%^&*]{8,}$/;
-  // if (!passwordRegex.test(password)) {
+  
+  // 입력값 검증
+  if (!validator.isLength(name, { min: 2, max: 30 }) || !/^[가-힣a-zA-Z\s]+$/.test(name)) {
+    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
+    return;
+  }
+
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
+
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+
+  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
   //   res.status(400).json({
   //     success: false,
-  //     message: "비밀번호는 영문 대소문자, 숫자, 특수문자가 포함된 8자리 이상의 문자열이어야 합니다.",
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
   //   });
   //   return;
   // }
+
 
   // Step 0: 탈퇴된 계정인지 확인
   db.query("SELECT id, state FROM user WHERE id = ?", [id])
@@ -531,6 +556,11 @@ app.get("/reservations", limiter, authenticateToken, async (req: Request, res: R
 app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId, seat_id, book_date } = req.body;
 
+  if (!Number.isInteger(seat_id) || seat_id <= 0) {
+    res.status(400).json({ success: false, message: "유효하지 않은 좌석 ID입니다." });
+    return;
+  }
+
   console.log("변환 전 Booking Date:", book_date);
   const bookDateKST = moment.tz(book_date, "Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
   console.log("변환된 Booking Date (KST):", bookDateKST);
@@ -671,6 +701,15 @@ app.post("/users/verify-email", csrfProtection, async (req: Request, res: Respon
 
   if (!email || !id) {
     res.status(400).json({ success: false, message: "학번과 이메일 주소가 필요합니다." });
+    return;
+  }
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
     return;
   }
 
@@ -835,6 +874,14 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     res.status(400).json({ success: false, message: "인증번호를 입력해주세요." });
     return;
   }
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+  if (!validator.isNumeric(code, { no_symbols: true }) || code.length !== 6) {
+    res.status(400).json({ success: false, message: "인증 코드는 6자리 숫자입니다." });
+    return;
+  }
 
   try {
     // 인증 코드 검증
@@ -885,6 +932,25 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     return;
   }
 
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
+
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+
+  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
+  //   res.status(400).json({
+  //     success: false,
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+  //   });
+  //   return;
+  // }
+
+
   // Step 1: 사용자 조회
   db.query("SELECT * FROM user WHERE id = ? AND email = ?", [id, email])
     .then((rows: any[]) => {
@@ -932,6 +998,15 @@ app.patch("/users/account/recovery", csrfProtection, (req: Request, res: Respons
       success: false,
       message: "학번과 이메일을 모두 입력해주세요.",
     });
+    return;
+  }
+  if (!validator.isNumeric(id, { no_symbols: true }) || id.length < 7 || id.length > 10) {
+    res.status(400).json({ success: false, message: "학번은 숫자로만 구성된 7~10자리 값이어야 합니다." });
+    return;
+  }
+
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
 
@@ -1037,6 +1112,35 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
     });
     return;
   }
+  if (!validator.isLength(name, { min: 2, max: 30 }) || !/^[가-힣a-zA-Z\s]+$/.test(name)) {
+    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
+    return;
+  }
+  if (!validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+  if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+    });
+    return;
+  }
+  if (!validator.isStrongPassword(newpassword, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+    });
+    return;
+  }
+  if (password === newpassword) {
+    res.status(400).json({
+      success: false,
+      message: "새 비밀번호는 이전 비밀번호와 동일할 수 없습니다.",
+    });
+    return;
+  }
 
   // Step 1: 사용자 정보 조회
   db.query("SELECT email, password FROM user WHERE user_id = ?", [userId])
@@ -1105,6 +1209,153 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
     });
 });
 // 사용자 정보 수정 API 끝
+
+
+// 예약 정보 조회 API 시작
+app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req: Request, res: Response) => {
+  const userId = req.user?.userId; // 인증된 사용자 ID
+  
+  if (!userId) {
+      res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
+      return;
+  }
+
+  db.query(
+      `
+      SELECT 
+          b.book_id,
+          b.book_date,
+          b.state,
+          s.name AS seat_name,
+          r.reason AS cancel_reason
+      FROM 
+          book b
+      LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+      LEFT JOIN 
+          book_restriction r ON b.seat_id = r.seat_id
+      WHERE 
+          b.user_id = ?
+      ORDER BY 
+          b.book_date DESC
+      `,
+      [userId]
+  )
+  .then((rows: any[]) => {
+      res.status(200).json({ success: true, reservations: rows });
+  })
+  .catch((err: any) => {
+      console.error("예약 정보 조회 중 오류 발생:", err);
+      res.status(500).json({
+          success: false,
+          message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
+      });
+  });
+});
+// 예약 정보 조회 API 끝
+
+
+// 공지사항 목록 조회 API 시작
+app.get("/notice", limiter, (req: Request, res: Response) => {
+  const query = `
+    SELECT 
+      notice_id, 
+      title, 
+      DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
+      views 
+    FROM notice 
+    ORDER BY date DESC`;
+
+  db.query(query)
+    .then((rows) => {
+      res.status(200).json({
+        success: true,
+        notices: rows.map((row) => ({
+          notice_id: row.notice_id,
+          title: row.title,
+          date: row.formatted_date,
+          views: row.views,
+        })),
+      });
+    })
+    .catch((err) => {
+      console.error("공지사항 데이터 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "공지사항 데이터를 가져오는 중 오류가 발생했습니다.",
+      });
+    });
+});
+// 공지사항 목록 조회 API 끝
+
+
+// 공지사항 내용 조회 API 시작
+app.get("/notice/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const query = `
+      SELECT 
+        n.notice_id, 
+        n.title, 
+        n.content, 
+        n.date, 
+        u.name AS author_name, 
+        n.views
+      FROM notice n
+      LEFT JOIN user u ON n.admin_id = u.user_id
+      WHERE n.notice_id = ?
+    `;
+
+    const [notice] = await db.query(query, [id]);
+
+    if (!notice) {
+      res.status(404).json({ message: "공지사항을 찾을 수 없습니다." });
+      return;
+    }
+
+    res.json({ notice });
+  } catch (err) {
+    console.error("공지사항 조회 중 오류 발생:", err);
+    res.status(500).json({ message: "공지사항 데이터를 가져오는 중 오류가 발생했습니다." });
+  }
+});
+// 공지사항 내용 조회 API 끝
+
+
+// 공지사항 조회수 증가 API 시작
+app.patch("/notice/:id/increment-views", csrfProtection, limiter, async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    // 조회수 증가 트랜잭션 시작
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // 조회수 증가
+    const result = await connection.query(
+      "UPDATE notice SET views = views + 1 WHERE notice_id = ?",
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      await connection.rollback();
+      res.status(404).json({ message: "공지사항을 찾을 수 없습니다." });
+      return;
+    }
+
+    // 트랜잭션 커밋
+    await connection.commit();
+    connection.release();
+
+    res.status(200).json({ message: "조회수가 증가했습니다." });
+  } catch (err) {
+    console.error("조회수 증가 처리 중 오류 발생:", err);
+    res.status(500).json({ message: "조회수 증가 처리 중 오류가 발생했습니다." });
+  }
+});
+// 공지사항 조회수 증가 API 끝
+
 
 
 
