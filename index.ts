@@ -14,6 +14,7 @@ import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; /
 import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
 import csurf from "csurf";
 import validator from "validator"; // 유효성 검사 라이브러리
+const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
 
 // Request 타입 확장
 declare module "express" {
@@ -290,13 +291,21 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
     return;
   }
 
-  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
-  //   res.status(400).json({
-  //     success: false,
-  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-  //   });
-  //   return;
-  // }
+  if (
+    !validator.isStrongPassword(password, {
+      minLength: 8,
+      minNumbers: 1,
+      minSymbols: 1,
+      minUppercase: 1,
+    }) || 
+    !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  ) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+    });
+    return;
+  }
 
 
   // Step 0: 탈퇴된 계정인지 확인
@@ -942,10 +951,18 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     return;
   }
 
-  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
+  // if (
+  //   !validator.isStrongPassword(password, {
+  //     minLength: 8,
+  //     minNumbers: 1,
+  //     minSymbols: 1,
+  //     minUppercase: 1,
+  //   }) || 
+  //   !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  // ) {
   //   res.status(400).json({
   //     success: false,
-  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
   //   });
   //   return;
   // }
@@ -1120,20 +1137,36 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
     res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
-  if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
-    res.status(400).json({
-      success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-    });
-    return;
-  }
-  if (!validator.isStrongPassword(newpassword, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
-    res.status(400).json({
-      success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-    });
-    return;
-  }
+  // if (
+  //   !validator.isStrongPassword(password, {
+  //     minLength: 8,
+  //     minNumbers: 1,
+  //     minSymbols: 1,
+  //     minUppercase: 1,
+  //   }) || 
+  //   !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  // ) {
+  //   res.status(400).json({
+  //     success: false,
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+  //   });
+  //   return;
+  // }
+  // if (
+  //   !validator.isStrongPassword(newpassword, {
+  //     minLength: 8,
+  //     minNumbers: 1,
+  //     minSymbols: 1,
+  //     minUppercase: 1,
+  //   }) || 
+  //   !allowedSymbols.test(newpassword) // 허용된 문자만 포함하지 않은 경우
+  // ) {
+  //   res.status(400).json({
+  //     success: false,
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+  //   });
+  //   return;
+  // }
   if (password === newpassword) {
     res.status(400).json({
       success: false,
