@@ -1084,7 +1084,7 @@ app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request
   }
 
   // DB에서 사용자 정보 조회
-  db.query("SELECT id, name, email FROM user WHERE user_id = ?", [userId])
+  db.query("SELECT id, name, email, permission FROM user WHERE user_id = ?", [userId])
     .then((rows: any[]) => {
       if (rows.length === 0) {
         res.status(404).json({
@@ -1102,6 +1102,7 @@ app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request
           id: user.id,
           name: user.name,
           email: user.email,
+          permission: user.permission,
         },
       });
     })
