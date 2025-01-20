@@ -7,6 +7,7 @@ import RateLimit from "express-rate-limit";
 import csurf from "csurf";
 import validator from "validator"; // 유효성 검사 라이브러리
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
+import he from "he";  // HTML 인코딩 라이브러리
 
 
 // Rate Limit 설정
@@ -59,7 +60,7 @@ router.get("/seats", csrfProtection, limiter, authenticateToken, authorizeAdmin,
 
 // 특정 좌석 정보 조회 API 시작
 // 해당 API 는 관리자만 접근 가능하며, 특정 좌석의 정보와 예약 정보를 함께 조회합니다.
-router.get("/seats/:seatName", authenticateToken, authorizeAdmin, async (req, res) => {
+router.get("/seats/:seatName", limiter, authenticateToken, authorizeAdmin, async (req, res) => {
   const { seatName } = req.params;
 
   try {
@@ -202,7 +203,7 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
           <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다</p>
           <ul>
             <li><strong>좌석 번호:</strong> ${seat_name}</li>
-            <li><strong>퇴실 사유:</strong> ${reason}</li>
+            <li><strong>퇴실 사유:</strong> ${he.encode(reason)}</li>
           </ul>
           <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
         `,
