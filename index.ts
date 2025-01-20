@@ -14,6 +14,7 @@ import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; /
 import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
 import csurf from "csurf";
 import validator from "validator"; // 유효성 검사 라이브러리
+const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
 
 // Request 타입 확장
 declare module "express" {
@@ -204,7 +205,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
 
         // Step 4: Refresh Token 발급
         const refreshToken = jwt.sign(
-          { userId: user.user_id },
+          { userId: user.user_id, name: user.name, permission: user.permission},
           process.env.JWT_REFRESH_SECRET!,
           { expiresIn: "7d" } // Refresh Token 만료 시간
         );
@@ -290,13 +291,21 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
     return;
   }
 
-  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
-  //   res.status(400).json({
-  //     success: false,
-  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-  //   });
-  //   return;
-  // }
+  if (
+    !validator.isStrongPassword(password, {
+      minLength: 8,
+      minNumbers: 1,
+      minSymbols: 1,
+      minUppercase: 1,
+    }) || 
+    !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  ) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+    });
+    return;
+  }
 
 
   // Step 0: 탈퇴된 계정인지 확인
@@ -444,7 +453,7 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
       try {
         const decoded: any = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!);
         const newAccessToken = jwt.sign(
-          { userId: decoded.userId },
+          { userId: decoded.userId, name: decoded.name, permission: decoded.permission },
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
@@ -515,40 +524,6 @@ app.patch("/users/account",csrfProtection, limiter,  authenticateToken, (req: Re
     });
 });
 // *** 계정 탈퇴 API 끝 ***
-
-
-
-// 좌석 상태 확인 API 시작
-app.get("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
-  let connection: any;
-
-  try {
-    // Step 1: 데이터베이스 연결 및 트랜잭션 시작
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-
-    // Step 2: 예약 상태 조회
-    const rows = await connection.query("SELECT seat_id FROM book WHERE state = 'book'");
-
-    // Step 3: 트랜잭션 커밋
-    await connection.commit();
-
-    res.status(200).json(rows);
-  } catch (err) {
-    // Step 4: 에러 발생 시 롤백
-    if (connection) await connection.rollback();
-
-    console.error("좌석 상태를 가져오는 중 오류 발생:", err);
-    res.status(500).json({
-      success: false,
-      message: "좌석 상태를 가져오는 중 서버 오류가 발생했습니다.",
-    });
-  } finally {
-    // Step 5: 연결 해제
-    if (connection) connection.release();
-  }
-});
-// 좌석 상태 확인 API 끝
 
 
 
@@ -675,21 +650,32 @@ app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (r
 
 
 // 좌석 데이터 제공 API 시작
-app.get("/seats", limiter, authenticateToken, (req: Request, res: Response) => {
-  db.query("SELECT * FROM seat")
-    .then((rows: any) => {
-      res.status(200).json({
-        success: true,
-        seats: rows, // 좌석 데이터 반환
-      });
-    })
-    .catch((err) => {
-      console.error("좌석 데이터를 가져오는 중 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "좌석 데이터를 불러오는 데 실패했습니다.",
-      });
+app.get("/seats", limiter, authenticateToken, async (req, res) => {
+  try {
+    const rows = await db.query(`
+      SELECT 
+        seat_id,
+        name AS seat_name,
+        type,
+        pc_surpport,
+        image_path,
+        basic_manners,
+        warning,
+        (SELECT state FROM book WHERE seat.seat_id = book.seat_id AND book.state = 'book' LIMIT 1) AS state
+      FROM seat
+    `);
+
+    res.status(200).json({
+      success: true,
+      seats: rows, // 좌석 데이터 반환
     });
+  } catch (err) {
+    console.error("좌석 데이터를 가져오는 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "좌석 데이터를 불러오는 데 실패했습니다.",
+    });
+  }
 });
 // 좌석 데이터 제공 API 끝
 
@@ -942,10 +928,18 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     return;
   }
 
-  // if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
+  // if (
+  //   !validator.isStrongPassword(password, {
+  //     minLength: 8,
+  //     minNumbers: 1,
+  //     minSymbols: 1,
+  //     minUppercase: 1,
+  //   }) || 
+  //   !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  // ) {
   //   res.status(400).json({
   //     success: false,
-  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
   //   });
   //   return;
   // }
@@ -1067,7 +1061,7 @@ app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request
   }
 
   // DB에서 사용자 정보 조회
-  db.query("SELECT id, name, email FROM user WHERE user_id = ?", [userId])
+  db.query("SELECT id, name, email, permission FROM user WHERE user_id = ?", [userId])
     .then((rows: any[]) => {
       if (rows.length === 0) {
         res.status(404).json({
@@ -1085,6 +1079,7 @@ app.get("/users/info", csrfProtection, limiter, authenticateToken, (req: Request
           id: user.id,
           name: user.name,
           email: user.email,
+          permission: user.permission,
         },
       });
     })
@@ -1120,20 +1115,36 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
     res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
-  if (!validator.isStrongPassword(password, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
-    res.status(400).json({
-      success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-    });
-    return;
-  }
-  if (!validator.isStrongPassword(newpassword, { minLength: 8, minNumbers: 1, minSymbols: 1, minUppercase: 1 })) {
-    res.status(400).json({
-      success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-    });
-    return;
-  }
+  // if (
+  //   !validator.isStrongPassword(password, {
+  //     minLength: 8,
+  //     minNumbers: 1,
+  //     minSymbols: 1,
+  //     minUppercase: 1,
+  //   }) || 
+  //   !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  // ) {
+  //   res.status(400).json({
+  //     success: false,
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+  //   });
+  //   return;
+  // }
+  // if (
+  //   !validator.isStrongPassword(newpassword, {
+  //     minLength: 8,
+  //     minNumbers: 1,
+  //     minSymbols: 1,
+  //     minUppercase: 1,
+  //   }) || 
+  //   !allowedSymbols.test(newpassword) // 허용된 문자만 포함하지 않은 경우
+  // ) {
+  //   res.status(400).json({
+  //     success: false,
+  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+  //   });
+  //   return;
+  // }
   if (password === newpassword) {
     res.status(400).json({
       success: false,
