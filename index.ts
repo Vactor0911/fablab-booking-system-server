@@ -527,40 +527,6 @@ app.patch("/users/account",csrfProtection, limiter,  authenticateToken, (req: Re
 
 
 
-// 좌석 상태 확인 API 시작
-app.get("/reservations", limiter, authenticateToken, async (req: Request, res: Response) => {
-  let connection: any;
-
-  try {
-    // Step 1: 데이터베이스 연결 및 트랜잭션 시작
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-
-    // Step 2: 예약 상태 조회
-    const rows = await connection.query("SELECT seat_id FROM book WHERE state = 'book'");
-
-    // Step 3: 트랜잭션 커밋
-    await connection.commit();
-
-    res.status(200).json(rows);
-  } catch (err) {
-    // Step 4: 에러 발생 시 롤백
-    if (connection) await connection.rollback();
-
-    console.error("좌석 상태를 가져오는 중 오류 발생:", err);
-    res.status(500).json({
-      success: false,
-      message: "좌석 상태를 가져오는 중 서버 오류가 발생했습니다.",
-    });
-  } finally {
-    // Step 5: 연결 해제
-    if (connection) connection.release();
-  }
-});
-// 좌석 상태 확인 API 끝
-
-
-
 // *** 좌석 예약 생성 API 시작 ***
 app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
   const { userId, seat_id, book_date } = req.body;
@@ -684,21 +650,32 @@ app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (r
 
 
 // 좌석 데이터 제공 API 시작
-app.get("/seats", limiter, authenticateToken, (req: Request, res: Response) => {
-  db.query("SELECT * FROM seat")
-    .then((rows: any) => {
-      res.status(200).json({
-        success: true,
-        seats: rows, // 좌석 데이터 반환
-      });
-    })
-    .catch((err) => {
-      console.error("좌석 데이터를 가져오는 중 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "좌석 데이터를 불러오는 데 실패했습니다.",
-      });
+app.get("/seats", limiter, authenticateToken, async (req, res) => {
+  try {
+    const rows = await db.query(`
+      SELECT 
+        seat_id,
+        name AS seat_name,
+        type,
+        pc_surpport,
+        image_path,
+        basic_manners,
+        warning,
+        (SELECT state FROM book WHERE seat.seat_id = book.seat_id AND book.state = 'book' LIMIT 1) AS state
+      FROM seat
+    `);
+
+    res.status(200).json({
+      success: true,
+      seats: rows, // 좌석 데이터 반환
     });
+  } catch (err) {
+    console.error("좌석 데이터를 가져오는 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "좌석 데이터를 불러오는 데 실패했습니다.",
+    });
+  }
 });
 // 좌석 데이터 제공 API 끝
 
