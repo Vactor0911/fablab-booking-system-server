@@ -57,7 +57,8 @@ router.get("/seats", csrfProtection, limiter, authenticateToken, authorizeAdmin,
 });
 
 
-// 특정 좌석 정보 조회 API (관리자 전용)
+// 특정 좌석 정보 조회 API 시작
+// 해당 API 는 관리자만 접근 가능하며, 특정 좌석의 정보와 예약 정보를 함께 조회합니다.
 router.get("/seats/:seatName", authenticateToken, authorizeAdmin, async (req, res) => {
   const { seatName } = req.params;
 
@@ -116,11 +117,12 @@ router.get("/seats/:seatName", authenticateToken, authorizeAdmin, async (req, re
     });
   }
 });
+// 특정 좌석 정보 조회 API 끝
 
 
 // 강제 퇴실 API 시작
 router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-    const { seatId, reason, start_date, end_date } = req.body;
+    const { seatId, reason } = req.body;
 
     if (!seatId || !reason) {
        res.status(400).json({
