@@ -205,7 +205,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
 
         // Step 4: Refresh Token 발급
         const refreshToken = jwt.sign(
-          { userId: user.user_id },
+          { userId: user.user_id, name: user.name, permission: user.permission},
           process.env.JWT_REFRESH_SECRET!,
           { expiresIn: "7d" } // Refresh Token 만료 시간
         );
@@ -453,7 +453,7 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
       try {
         const decoded: any = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!);
         const newAccessToken = jwt.sign(
-          { userId: decoded.userId },
+          { userId: decoded.userId, name: decoded.name, permission: decoded.permission },
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
