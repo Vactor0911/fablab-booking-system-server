@@ -581,7 +581,9 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
 
     // 예약 로그 기록
     await connection.query(
-      `INSERT INTO book_log (book_id, log_date, type) VALUES (?, NOW(), 'book')`,
+      `
+      INSERT INTO logs (book_id, log_date, type, log_type) VALUES (?, NOW(), 'book', 'book')
+      `,
       [result.insertId]
     );
 
@@ -634,7 +636,9 @@ app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (r
     const bookId = rows[0].book_id; // 예약 ID 추출
     // 로그 기록
     await connection.query(
-      `INSERT INTO book_log (book_id, log_date, type) VALUES (?, NOW(), 'end')`,
+      `
+      INSERT INTO logs (book_id, log_date, type, log_type) VALUES (?, NOW(), 'end', 'book')
+      `,
       [bookId]
     );
 
@@ -1249,18 +1253,18 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
     `
     SELECT 
         b.book_id,
-        b.book_date,
+        DATE_FORMAT(b.book_date, '%Y/%m/%d %H:%i') AS book_date,
         b.state,
         s.name AS seat_name,
-        bl.type AS log_type,
-        bl.log_date,
+        l.type AS log_type,
+        l.log_date,
         r.reason AS cancel_reason
     FROM 
         book b
     LEFT JOIN 
         seat s ON b.seat_id = s.seat_id
     LEFT JOIN 
-        book_log bl ON b.book_id = bl.book_id AND bl.type = 'cancel'
+        logs l ON b.book_id = l.book_id AND l.log_type = 'book' AND l.type = 'cancel'
     LEFT JOIN 
         book_restriction r ON b.book_id = r.book_id
     WHERE 
@@ -1271,7 +1275,6 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
     [userId]
   )
   .then((rows: any[]) => {
-    console.log("예약 정보 조회 결과:", rows);
     res.status(200).json({ success: true, reservations: rows });
   })
   .catch((err: any) => {
@@ -1285,14 +1288,13 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
 // 예약 정보 조회 API 끝
 
 
-
 // 공지사항 목록 조회 API 시작
 app.get("/notice", limiter, (req: Request, res: Response) => {
   const query = `
     SELECT 
       notice_id, 
       title, 
-      DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
+      DATE_FORMAT(date, '%Y/%m/%d') AS formatted_date, 
       views 
     FROM notice 
     ORDER BY date DESC`;

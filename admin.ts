@@ -178,7 +178,9 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
 
       // 예약 로그 기록
       await connection.query(
-        `INSERT INTO book_log (book_id, log_date, type) VALUES (?, NOW(), 'cancel')`,
+        `
+        INSERT INTO logs (book_id, log_date, type, log_type) VALUES (?, NOW(), 'cancel', 'book')
+        `,
         [book_id]
       );
 
@@ -300,8 +302,7 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
     // 로그 기록 추가
     await connection.query(
       `
-      INSERT INTO notice_log (notice_id, log_date, type)
-      VALUES (?, NOW(), 'edit')
+      INSERT INTO logs (notice_id, log_date, type, log_type) VALUES (?, NOW(), 'edit', 'notice')
       `,
       [noticeId]
     );
@@ -325,7 +326,7 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
 // 공지사항 수정 API 끝
 
 
-// 공지사항 생성 API 시작
+// 공지사항 생성, 작성 API 시작
 router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
   const { title, content, userId } = req.body;
 
@@ -371,8 +372,7 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
     // 로그 기록 추가
     await connection.query(
       `
-      INSERT INTO notice_log (notice_id, log_date, type)
-      VALUES (?, NOW(), 'create')
+      INSERT INTO logs (notice_id, log_date, type, log_type) VALUES (?, NOW(), 'create', 'notice')
       `,
       [noticeId]
     );
@@ -431,15 +431,17 @@ router.delete("/notice/:id", csrfProtection, limiter, authenticateToken, authori
       return;
     }
 
-    // 공지사항 삭제
+    // 삭제 로그 기록
     await connection.query(
-      `DELETE FROM notice WHERE notice_id = ?`,
+      `
+      INSERT INTO logs (notice_id, log_date, type, log_type) VALUES (?, NOW(), 'delete', 'notice')
+      `,
       [noticeId]
     );
 
-    // 삭제 로그 기록
+    // 공지사항 삭제
     await connection.query(
-      `INSERT INTO notice_log (notice_id, log_date, type) VALUES (?, NOW(), 'delete')`,
+      `DELETE FROM notice WHERE notice_id = ?`,
       [noticeId]
     );
 
@@ -464,6 +466,74 @@ router.delete("/notice/:id", csrfProtection, limiter, authenticateToken, authori
   }
 });
 // 공지사항 삭제 API 끝
+
+// 모든 로그 조회 API 시작
+router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          l.log_id,
+          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
+          l.log_type,           -- 로그 유형 (book, notice)
+          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          b.book_date,
+          u.name AS user_name,
+          u.id AS user_info,
+          s.name AS seat_name,
+          r.reason AS restriction_reason,
+          n.title AS notice_title,
+          a.name AS admin_name
+        FROM 
+          logs l
+        LEFT JOIN 
+          book b ON l.book_id = b.book_id AND l.log_type = 'book'
+        LEFT JOIN 
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+        LEFT JOIN 
+          user u ON b.user_id = u.user_id
+        LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+        LEFT JOIN 
+          book_restriction r ON b.book_id = r.book_id
+        LEFT JOIN 
+          user a ON r.admin_id = a.user_id
+        ORDER BY 
+          l.log_date DESC
+        `
+      );
+    })
+    .then((logs) => {
+      // logs가 배열이 아닐 경우 변환
+      if (!Array.isArray(logs)) {
+        logs = Object.values(logs);
+      }
+
+      if (logs.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "로그 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        logs: logs,
+      });
+    })
+    .catch((err) => {
+      console.error("모든 로그 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 모든 로그 조회 API 끝
+
+
 
 
 
