@@ -383,6 +383,75 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
 // 공지사항 생성 API 끝
 
 
+// 공지사항 삭제 API 시작
+router.delete("/notice/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { id } = req.params;
+  const noticeId = parseInt(id, 10);
+
+  if (isNaN(noticeId)) {
+    res.status(400).json({
+      success: false,
+      message: "유효하지 않은 공지사항 ID입니다.",
+    });
+    return;
+  }
+
+  let connection: any;
+
+  try {
+    // DB 연결 및 트랜잭션 시작
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // 공지사항 존재 여부 확인
+    const [notice] = await connection.query(
+      `SELECT * FROM notice WHERE notice_id = ?`,
+      [noticeId]
+    );
+
+    if (!notice || notice.length === 0) {
+      res.status(404).json({
+        success: false,
+        message: "해당 공지사항을 찾을 수 없습니다.",
+      });
+      return;
+    }
+
+    // 공지사항 삭제
+    await connection.query(
+      `DELETE FROM notice WHERE notice_id = ?`,
+      [noticeId]
+    );
+
+    // 삭제 로그 기록
+    await connection.query(
+      `INSERT INTO notice_log (notice_id, log_date, type) VALUES (?, NOW(), 'delete')`,
+      [noticeId]
+    );
+
+    // 트랜잭션 커밋
+    await connection.commit();
+
+    res.status(200).json({
+      success: true,
+      message: "공지사항이 성공적으로 삭제되었습니다.",
+    });
+    return;
+  } catch (err) {
+    if (connection) await connection.rollback(); // 에러 발생 시 롤백
+    console.error("공지사항 삭제 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "공지사항 삭제 중 서버 오류가 발생했습니다.",
+    });
+    return;
+  } finally {
+    if (connection) connection.release(); // DB 연결 해제
+  }
+});
+// 공지사항 삭제 API 끝
+
+
 
 
 export default router;
