@@ -1241,43 +1241,49 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
   const userId = req.user?.userId; // 인증된 사용자 ID
   
   if (!userId) {
-      res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
-      return;
+    res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
+    return;
   }
 
   db.query(
-      `
-      SELECT 
-          b.book_id,
-          b.book_date,
-          b.state,
-          s.name AS seat_name,
-          r.reason AS cancel_reason
-      FROM 
-          book b
-      LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-      LEFT JOIN 
-          book_restriction r ON b.seat_id = r.seat_id
-      WHERE 
-          b.user_id = ?
-      ORDER BY 
-          b.book_date DESC
-      `,
-      [userId]
+    `
+    SELECT 
+        b.book_id,
+        b.book_date,
+        b.state,
+        s.name AS seat_name,
+        bl.type AS log_type,
+        bl.log_date,
+        r.reason AS cancel_reason
+    FROM 
+        book b
+    LEFT JOIN 
+        seat s ON b.seat_id = s.seat_id
+    LEFT JOIN 
+        book_log bl ON b.book_id = bl.book_id AND bl.type = 'cancel'
+    LEFT JOIN 
+        book_restriction r ON b.book_id = r.book_id
+    WHERE 
+        b.user_id = ?
+    ORDER BY 
+        b.book_date DESC
+    `,
+    [userId]
   )
   .then((rows: any[]) => {
-      res.status(200).json({ success: true, reservations: rows });
+    console.log("예약 정보 조회 결과:", rows);
+    res.status(200).json({ success: true, reservations: rows });
   })
   .catch((err: any) => {
-      console.error("예약 정보 조회 중 오류 발생:", err);
-      res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
-      });
+    console.error("예약 정보 조회 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
+    });
   });
 });
 // 예약 정보 조회 API 끝
+
 
 
 // 공지사항 목록 조회 API 시작

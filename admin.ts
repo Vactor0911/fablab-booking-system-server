@@ -141,8 +141,9 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
       return;
     }
 
+    let connection: any;
     try {
-      const connection = await db.getConnection(); // 트랜잭션 시작
+      connection = await db.getConnection(); // 트랜잭션 시작
       await connection.beginTransaction();
 
       // 예약 정보 가져오기
@@ -166,7 +167,14 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
       const { book_id, email, name, seat_name } = reservation;
 
       // 예약 상태를 'cancel'로 업데이트
-      await connection.query(`UPDATE book SET state = 'cancel' WHERE book_id = ?`, [book_id]);
+      await connection.query(
+        `
+        UPDATE book 
+        SET state = 'cancel' 
+        WHERE book_id = ? AND state = 'book'
+        `,
+        [book_id]
+      );
 
       // 예약 로그 기록
       await connection.query(
@@ -176,9 +184,10 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
 
       // 예약 제한 테이블에 기록 추가
       await connection.query(
-        `INSERT INTO book_restriction (seat_id, admin_id, start_date, end_date, reason) 
-         VALUES (?, ?, NOW(), NOW(), ?)`,
-        [seatId, req.user.userId, reason]
+        `INSERT INTO book_restriction (seat_id, book_id, admin_id, start_date, end_date, reason) 
+        VALUES (?, ?, ?, NOW(), NOW(), ?)
+        `,
+        [seatId, book_id, req.user.userId, reason]
       );
 
       // 이메일 전송
@@ -209,7 +218,11 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
         `,
       };
 
-      await transporter.sendMail(mailOptions);
+      try {
+        await transporter.sendMail(mailOptions);
+      } catch (emailError) {
+        console.error("이메일 전송 중 오류 발생:", emailError);
+      }
 
       // 트랜잭션 커밋
       await connection.commit();
@@ -219,6 +232,7 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
         message: "강제 퇴실 처리가 완료되었으며, 이메일이 전송되었습니다.",
       });
     } catch (err) {
+      if (connection) await connection.rollback(); // 에러 발생 시 롤백
       console.error("강제 퇴실 처리 중 오류 발생:", err);
       res.status(500).json({
         success: false,
