@@ -274,7 +274,7 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
     await connection.beginTransaction();
 
     // 공지사항 수정 쿼리
-    const result = await connection.query(
+    await connection.query(
       `
       UPDATE notice
       SET title = ?, content = ?, admin_id = ?, date = NOW()

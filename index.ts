@@ -579,6 +579,12 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
       [userId, seat_id, bookDateKST]
     );
 
+    // 예약 로그 기록
+    await connection.query(
+      `INSERT INTO book_log (book_id, log_date, type) VALUES (?, NOW(), 'book')`,
+      [result.insertId]
+    );
+
     // Step 5: 트랜잭션 커밋
     await connection.commit();
 
@@ -624,6 +630,13 @@ app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (r
 
     // Step 3: 예약 상태를 'end'로 업데이트
     await connection.query("UPDATE book SET state = 'end' WHERE user_id = ? AND state = 'book'", [userId]);
+
+    const bookId = rows[0].book_id; // 예약 ID 추출
+    // 로그 기록
+    await connection.query(
+      `INSERT INTO book_log (book_id, log_date, type) VALUES (?, NOW(), 'end')`,
+      [bookId]
+    );
 
     // Step 4: 트랜잭션 커밋
     await connection.commit();
