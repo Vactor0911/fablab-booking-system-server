@@ -478,12 +478,10 @@ router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdm
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
           DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
-          b.book_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
           r.reason AS restriction_reason,
-          n.title AS notice_title,
           a.name AS admin_name
         FROM 
           logs l
