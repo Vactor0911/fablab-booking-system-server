@@ -311,6 +311,78 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
 // 공지사항 수정 API 끝
 
 
+// 공지사항 생성 API 시작
+router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { title, content, userId } = req.body;
+
+  if (!title || !content) {
+    res.status(400).json({
+      success: false,
+      message: "제목과 내용을 모두 입력해주세요.",
+    });
+    return;
+  }
+
+  if (!validator.isLength(title, { min: 1, max: 100 })) {
+    res.status(400).json({
+      success: false,
+      message: "제목은 1~100자 사이여야 합니다.",
+    });
+    return;
+  }
+
+  if (!validator.isLength(content, { min: 1, max: 1000 })) {
+    res.status(400).json({
+      success: false,
+      message: "내용은 1~1000자 사이여야 합니다.",
+    });
+    return;
+  }
+
+  try {
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // 공지사항 생성 쿼리
+    const result = await connection.query(
+      `
+      INSERT INTO notice (title, content, admin_id, date)
+      VALUES (?, ?, ?, NOW())
+      `,
+      [title.trim(), content.trim(), userId] // 인코딩 제거
+    );
+
+    const noticeId = result.insertId; // 생성된 공지사항 ID 가져오기
+
+    // 로그 기록 추가
+    await connection.query(
+      `
+      INSERT INTO notice_log (notice_id, log_date, type)
+      VALUES (?, NOW(), 'create')
+      `,
+      [noticeId]
+    );
+
+    await connection.commit();
+
+    res.status(201).json({
+      success: true,
+      message: "공지사항이 성공적으로 생성되었습니다.",
+      noticeId,
+    });
+    return;
+  } catch (err) {
+    console.error("공지사항 생성 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "공지사항 생성 중 서버 오류가 발생했습니다.",
+    });
+    return;
+  }
+});
+// 공지사항 생성 API 끝
+
+
 
 
 export default router;
