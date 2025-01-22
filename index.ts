@@ -169,7 +169,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
         // 탈퇴된 계정인 경우
         return Promise.reject({
           status: 400,
-          message: "탈퇴된 계정입니다. 계정을 복구해주세요.",
+          message: "탈퇴된 계정입니다. 관리자에게 문의해주세요.",
         });
       }
 
@@ -297,7 +297,7 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
       minLength: 8,
       minNumbers: 1,
       minSymbols: 1,
-      minUppercase: 1,
+      minUppercase: 0,
     }) || 
     !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
   ) {
@@ -316,7 +316,7 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
         // 탈퇴된 계정인 경우
         return Promise.reject({
           status: 400,
-          message: "탈퇴된 계정입니다. 계정을 복구해주세요.",
+          message: "탈퇴된 계정입니다. 관리자에게 문의해주세요.",
         });
       }
 
@@ -733,7 +733,7 @@ app.post("/users/verify-email", csrfProtection, async (req: Request, res: Respon
         }
 
         if (resetUser.state === "inactive") {
-          res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+          res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 관리자에게 문의해주세요." });
           return;
         }
         break;
@@ -761,7 +761,7 @@ app.post("/users/verify-email", csrfProtection, async (req: Request, res: Respon
 
           if (existingUser.email === email) {
             if (existingUser.state === "inactive") {
-              res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 계정을 복구해주세요." });
+              res.status(400).json({ success: false, message: "탈퇴된 계정입니다. 관리자에게 문의해주세요." });
               return;
             }
 
@@ -946,21 +946,21 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
     return;
   }
 
-  // if (
-  //   !validator.isStrongPassword(password, {
-  //     minLength: 8,
-  //     minNumbers: 1,
-  //     minSymbols: 1,
-  //     minUppercase: 1,
-  //   }) || 
-  //   !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
-  // ) {
-  //   res.status(400).json({
-  //     success: false,
-  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
-  //   });
-  //   return;
-  // }
+  if (
+    !validator.isStrongPassword(password, {
+      minLength: 8,
+      minNumbers: 1,
+      minSymbols: 1,
+      minUppercase: 0,
+    }) || 
+    !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  ) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+    });
+    return;
+  }
 
 
   // Step 1: 사용자 조회
@@ -1133,36 +1133,36 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
     res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
     return;
   }
-  // if (
-  //   !validator.isStrongPassword(password, {
-  //     minLength: 8,
-  //     minNumbers: 1,
-  //     minSymbols: 1,
-  //     minUppercase: 1,
-  //   }) || 
-  //   !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
-  // ) {
-  //   res.status(400).json({
-  //     success: false,
-  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
-  //   });
-  //   return;
-  // }
-  // if (
-  //   !validator.isStrongPassword(newpassword, {
-  //     minLength: 8,
-  //     minNumbers: 1,
-  //     minSymbols: 1,
-  //     minUppercase: 1,
-  //   }) || 
-  //   !allowedSymbols.test(newpassword) // 허용된 문자만 포함하지 않은 경우
-  // ) {
-  //   res.status(400).json({
-  //     success: false,
-  //     message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
-  //   });
-  //   return;
-  // }
+  if (
+    !validator.isStrongPassword(password, {
+      minLength: 8,
+      minNumbers: 1,
+      minSymbols: 1,
+      minUppercase: 0,
+    }) || 
+    !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+  ) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+    });
+    return;
+  }
+  if (
+    !validator.isStrongPassword(newpassword, {
+      minLength: 8,
+      minNumbers: 1,
+      minSymbols: 1,
+      minUppercase: 0,
+    }) || 
+    !allowedSymbols.test(newpassword) // 허용된 문자만 포함하지 않은 경우
+  ) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+    });
+    return;
+  }
   if (password === newpassword) {
     res.status(400).json({
       success: false,
@@ -1253,7 +1253,7 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
     `
     SELECT 
         b.book_id,
-        DATE_FORMAT(b.book_date, '%Y/%m/%d %H:%i') AS book_date,
+        DATE_FORMAT(b.book_date, '%Y-%m-%d %H:%i') AS book_date,
         b.state,
         s.name AS seat_name,
         l.type AS log_type,
@@ -1294,7 +1294,7 @@ app.get("/notice", limiter, (req: Request, res: Response) => {
     SELECT 
       notice_id, 
       title, 
-      DATE_FORMAT(date, '%Y/%m/%d') AS formatted_date, 
+      DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
       views 
     FROM notice 
     ORDER BY date DESC`;
