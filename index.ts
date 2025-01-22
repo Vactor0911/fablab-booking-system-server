@@ -240,6 +240,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
               message: "로그인 성공",
               name: user.name,
               userId: user.user_id, // 사용자 ID, 프론트에서 사용
+              permissions: user.permission, // 사용자 권한, 프론트에서 사용
             });
           });
       });
@@ -578,6 +579,14 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
       [userId, seat_id, bookDateKST]
     );
 
+    // 예약 로그 기록
+    await connection.query(
+      `
+      INSERT INTO logs (book_id, log_date, type, log_type) VALUES (?, NOW(), 'book', 'book')
+      `,
+      [result.insertId]
+    );
+
     // Step 5: 트랜잭션 커밋
     await connection.commit();
 
@@ -623,6 +632,15 @@ app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (r
 
     // Step 3: 예약 상태를 'end'로 업데이트
     await connection.query("UPDATE book SET state = 'end' WHERE user_id = ? AND state = 'book'", [userId]);
+
+    const bookId = rows[0].book_id; // 예약 ID 추출
+    // 로그 기록
+    await connection.query(
+      `
+      INSERT INTO logs (book_id, log_date, type, log_type) VALUES (?, NOW(), 'end', 'book')
+      `,
+      [bookId]
+    );
 
     // Step 4: 트랜잭션 커밋
     await connection.commit();
@@ -1227,40 +1245,44 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
   const userId = req.user?.userId; // 인증된 사용자 ID
   
   if (!userId) {
-      res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
-      return;
+    res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
+    return;
   }
 
   db.query(
-      `
-      SELECT 
-          b.book_id,
-          b.book_date,
-          b.state,
-          s.name AS seat_name,
-          r.reason AS cancel_reason
-      FROM 
-          book b
-      LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-      LEFT JOIN 
-          book_restriction r ON b.seat_id = r.seat_id
-      WHERE 
-          b.user_id = ?
-      ORDER BY 
-          b.book_date DESC
-      `,
-      [userId]
+    `
+    SELECT 
+        b.book_id,
+        DATE_FORMAT(b.book_date, '%Y/%m/%d %H:%i') AS book_date,
+        b.state,
+        s.name AS seat_name,
+        l.type AS log_type,
+        l.log_date,
+        r.reason AS cancel_reason
+    FROM 
+        book b
+    LEFT JOIN 
+        seat s ON b.seat_id = s.seat_id
+    LEFT JOIN 
+        logs l ON b.book_id = l.book_id AND l.log_type = 'book' AND l.type = 'cancel'
+    LEFT JOIN 
+        book_restriction r ON b.book_id = r.book_id
+    WHERE 
+        b.user_id = ?
+    ORDER BY 
+        b.book_date DESC
+    `,
+    [userId]
   )
   .then((rows: any[]) => {
-      res.status(200).json({ success: true, reservations: rows });
+    res.status(200).json({ success: true, reservations: rows });
   })
   .catch((err: any) => {
-      console.error("예약 정보 조회 중 오류 발생:", err);
-      res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
-      });
+    console.error("예약 정보 조회 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
+    });
   });
 });
 // 예약 정보 조회 API 끝
@@ -1272,7 +1294,7 @@ app.get("/notice", limiter, (req: Request, res: Response) => {
     SELECT 
       notice_id, 
       title, 
-      DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
+      DATE_FORMAT(date, '%Y/%m/%d') AS formatted_date, 
       views 
     FROM notice 
     ORDER BY date DESC`;
