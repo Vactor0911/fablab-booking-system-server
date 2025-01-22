@@ -8,7 +8,8 @@ import csurf from "csurf";
 import validator from "validator"; // 유효성 검사 라이브러리
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
 import he from "he";  // HTML 인코딩 라이브러리
-
+import bcrypt from "bcrypt";  // 비밀번호 해싱 라이브러리
+const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
 
 // Rate Limit 설정
 const limiter = RateLimit({
@@ -285,8 +286,9 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
     return;
   }
 
+  let connection: any;
   try {
-    const connection = await db.getConnection();
+    connection = await db.getConnection();
     await connection.beginTransaction();
 
     // 공지사항 수정 쿼리
@@ -316,11 +318,13 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
     return;
   } catch (err) {
     console.error("공지사항 수정 중 오류 발생:", err);
+    if (connection) await connection.rollback();
     res.status(500).json({
       success: false,
       message: "공지사항 수정 중 서버 오류가 발생했습니다.",
     });
-    return;
+  } finally {
+    if (connection) connection.release(); // 연결 해제 추가
   }
 });
 // 공지사항 수정 API 끝
@@ -353,9 +357,9 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
     });
     return;
   }
-
+  let connection: any;
   try {
-    const connection = await db.getConnection();
+    connection = await db.getConnection();
     await connection.beginTransaction();
 
     // 공지사항 생성 쿼리
@@ -387,11 +391,13 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
     return;
   } catch (err) {
     console.error("공지사항 생성 중 오류 발생:", err);
+    if (connection) await connection.rollback();
     res.status(500).json({
       success: false,
       message: "공지사항 생성 중 서버 오류가 발생했습니다.",
     });
-    return;
+  } finally {
+    if (connection) connection.release(); // 연결 해제 추가
   }
 });
 // 공지사항 생성 API 끝
@@ -477,7 +483,7 @@ router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdm
           l.log_id,
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
-          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
@@ -500,7 +506,7 @@ router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdm
         ORDER BY 
           l.log_date DESC
         `
-      );
+      ).finally(() => connection.release()); // 연결 해제 추가
     })
     .then((logs) => {
       // logs가 배열이 아닐 경우 변환
@@ -523,6 +529,7 @@ router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdm
     })
     .catch((err) => {
       console.error("모든 로그 조회 중 오류 발생:", err);
+
       res.status(500).json({
         success: false,
         message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
@@ -542,7 +549,7 @@ router.get("/logs/book", csrfProtection, limiter, authenticateToken, authorizeAd
           l.log_id,
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
-          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
@@ -567,7 +574,7 @@ router.get("/logs/book", csrfProtection, limiter, authenticateToken, authorizeAd
         ORDER BY 
           l.log_date DESC
         `
-      );
+      ).finally(() => connection.release()); // 연결 해제 추가
     })
     .then((logs) => {
       // logs가 배열이 아닐 경우 변환
@@ -609,7 +616,7 @@ router.get("/logs/end", csrfProtection, limiter, authenticateToken, authorizeAdm
           l.log_id,
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
-          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
@@ -634,7 +641,7 @@ router.get("/logs/end", csrfProtection, limiter, authenticateToken, authorizeAdm
         ORDER BY 
           l.log_date DESC
         `
-      );
+      ).finally(() => connection.release()); // 연결 해제 추가
     })
     .then((logs) => {
       // logs가 배열이 아닐 경우 변환
@@ -676,7 +683,7 @@ router.get("/logs/cancel", csrfProtection, limiter, authenticateToken, authorize
           l.log_id,
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
-          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
@@ -701,7 +708,7 @@ router.get("/logs/cancel", csrfProtection, limiter, authenticateToken, authorize
         ORDER BY 
           l.log_date DESC
         `
-      );
+      ).finally(() => connection.release()); // 연결 해제 추가
     })
     .then((logs) => {
       // logs가 배열이 아닐 경우 변환
@@ -743,7 +750,7 @@ router.get("/logs/create", csrfProtection, limiter, authenticateToken, authorize
           l.log_id,
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
-          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
@@ -768,7 +775,7 @@ router.get("/logs/create", csrfProtection, limiter, authenticateToken, authorize
         ORDER BY 
           l.log_date DESC
         `
-      );
+      ).finally(() => connection.release()); // 연결 해제 추가
     })
     .then((logs) => {
       // logs가 배열이 아닐 경우 변환
@@ -810,7 +817,7 @@ router.get("/logs/edit", csrfProtection, limiter, authenticateToken, authorizeAd
           l.log_id,
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
-          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
@@ -835,7 +842,7 @@ router.get("/logs/edit", csrfProtection, limiter, authenticateToken, authorizeAd
         ORDER BY 
           l.log_date DESC
         `
-      );
+      ).finally(() => connection.release()); // 연결 해제 추가
     })
     .then((logs) => {
       // logs가 배열이 아닐 경우 변환
@@ -876,7 +883,7 @@ router.get("/logs/delete", csrfProtection, limiter, authenticateToken, authorize
           l.log_id,
           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
           l.log_type,           -- 로그 유형 (book, notice)
-          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
@@ -901,7 +908,7 @@ router.get("/logs/delete", csrfProtection, limiter, authenticateToken, authorize
         ORDER BY 
           l.log_date DESC
         `
-      );
+      ).finally(() => connection.release()); // 연결 해제 추가
     })
     .then((logs) => {
       // logs가 배열이 아닐 경우 변환
@@ -931,6 +938,208 @@ router.get("/logs/delete", csrfProtection, limiter, authenticateToken, authorize
     });
 });
 // 공지사항 삭제 로그 조회 API 끝
+
+
+// 사용자 목록 조회 API 시작
+router.get("/users", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          u.user_id,
+          u.name,
+          u.id,
+          u.email,
+          u.permission,
+          u.state,
+          DATE_FORMAT(MAX(b.book_date), '%Y-%m-%d %H:%i') AS last_reservation -- 마지막 예약 일시를 가져오기 위해 MAX 사용
+        FROM 
+          user u
+        LEFT JOIN 
+          book b ON u.user_id = b.user_id
+        GROUP BY 
+          u.user_id, u.name, u.id, u.email, u.permission, u.state
+        ORDER BY 
+          u.permission ASC, u.state ASC, u.name ASC
+        `
+      ).finally(() => connection.release()); // 연결 해제 추가
+    })
+    .then((users) => {
+      // users가 배열이 아닐 경우 변환
+      if (!Array.isArray(users)) {
+        users = Object.values(users);
+      }
+
+      if (users.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "사용자 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        users: users,
+      });
+    })
+    .catch((err) => {
+      console.error("사용자 목록 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 사용자 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 사용자 목록 조회 API 끝
+
+
+// 사용자 정보 수정 API 시작
+router.patch("/users/:user_id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { user_id } = req.params;
+  const { name, email, permission, state, newPassword } = req.body;
+  const userId = parseInt(user_id, 10);
+
+  if (isNaN(userId)) {
+    res.status(400).json({
+      success: false,
+      message: "유효하지 않은 사용자 ID입니다.",
+    });
+    return;
+  }
+
+  // 이름 입력값 검증
+  if (name && (!validator.isLength(name, { min: 2, max: 30 }) || !/^[가-힣a-zA-Z\s]+$/.test(name))) {
+    res.status(400).json({ success: false, message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다." });
+    return;
+  }
+
+  // 이메일 입력값 검증
+  if (email && !validator.isEmail(email)) {
+    res.status(400).json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
+    return;
+  }
+
+  // 비밀번호 입력값 검증
+  if (newPassword && (
+    !validator.isStrongPassword(newPassword, {
+      minLength: 8,
+      minNumbers: 1,
+      minSymbols: 1,
+      minUppercase: 0,
+    }) ||
+    !allowedSymbols.test(newPassword)
+  )) {
+    res.status(400).json({
+      success: false,
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+    });
+    return;
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // 요청자의 권한 확인
+    const requestingUser = req.user; // 요청자의 정보
+    const [targetUserResult] = await connection.query(
+      `SELECT permission FROM user WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!targetUserResult) {
+      res.status(404).json({
+        success: false,
+        message: "대상이 되는 사용자를 찾을 수 없습니다.",
+      });
+      return;
+    }
+
+    const targetPermission = targetUserResult.permission;
+
+    // 권한 제한: admin은 admin 및 superadmin 계정을 수정할 수 없음
+    if (
+      requestingUser.permission === "admin" &&
+      (targetPermission === "admin" || targetPermission === "superadmin")
+    ) {
+      res.status(403).json({
+        success: false,
+        message: "해당 사용자를 수정할 권한이 없습니다.",
+      });
+      return;
+    }
+
+    const fieldsToUpdate: string[] = [];
+    const queryParams: (string | number)[] = [];
+
+    // 이름 수정 (admin, superadmin 모두 가능)
+    if (name) {
+      fieldsToUpdate.push("name = ?");
+      queryParams.push(name.trim());
+    }
+
+    // 이메일 수정 (admin, superadmin 모두 가능)
+    if (email) {
+      fieldsToUpdate.push("email = ?");
+      queryParams.push(email.trim());
+    }
+
+    // 상태(state) 수정 (admin, superadmin 모두 가능)
+    if (state) {
+      fieldsToUpdate.push("state = ?");
+      queryParams.push(state);
+    }
+
+    // 권한(permission) 수정 (superadmin만 가능)
+    if (requestingUser.permission === "superadmin" && permission) {
+      fieldsToUpdate.push("permission = ?");
+      queryParams.push(permission);
+    }
+
+    // 필수 항목이 하나도 없는 경우 업데이트 쿼리 실행하지 않음
+    if (fieldsToUpdate.length > 0) {
+      const updateQuery = `
+      UPDATE user
+      SET ${fieldsToUpdate.join(", ")}
+      WHERE user_id = ?`;
+      queryParams.push(userId);
+      await connection.query(updateQuery, queryParams);
+    }
+
+    // 비밀번호 변경 (admin, superadmin 모두 가능)
+    if (newPassword) {
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await connection.query(
+        `
+        UPDATE user
+        SET password = ?
+        WHERE user_id = ?`,
+        [hashedPassword, userId]
+      );
+    }
+
+    await connection.commit();
+
+    res.status(200).json({
+      success: true,
+      message: "사용자 정보가 성공적으로 수정되었습니다.",
+    });
+  } catch (err) {
+    console.error("사용자 정보 수정 중 오류 발생:", err);
+    if (connection) await connection.rollback();
+    res.status(500).json({
+      success: false,
+      message: "사용자 정보 수정 중 서버 오류가 발생했습니다.",
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+// 사용자 정보 수정 API 끝
+
 
 
 
