@@ -532,6 +532,407 @@ router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdm
 // 모든 로그 조회 API 끝
 
 
+// 예약 로그 조회 API 시작
+router.get("/logs/book", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          l.log_id,
+          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
+          l.log_type,           -- 로그 유형 (book, notice)
+          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          u.name AS user_name,
+          u.id AS user_info,
+          s.name AS seat_name,
+          r.reason AS restriction_reason,
+          a.name AS admin_name
+        FROM 
+          logs l
+        LEFT JOIN 
+          book b ON l.book_id = b.book_id AND l.log_type = 'book'
+        LEFT JOIN 
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+        LEFT JOIN 
+          user u ON b.user_id = u.user_id
+        LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+        LEFT JOIN 
+          book_restriction r ON b.book_id = r.book_id
+        LEFT JOIN 
+          user a ON r.admin_id = a.user_id
+        WHERE 
+          l.type = 'book' -- 예약 로그만 조회
+        ORDER BY 
+          l.log_date DESC
+        `
+      );
+    })
+    .then((logs) => {
+      // logs가 배열이 아닐 경우 변환
+      if (!Array.isArray(logs)) {
+        logs = Object.values(logs);
+      }
+
+      if (logs.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "로그 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        logs: logs,
+      });
+    })
+    .catch((err) => {
+      console.error("예약 로그 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 예약 로그 조회 API 끝
+
+
+// 퇴실 로그 조회 API 시작
+router.get("/logs/end", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          l.log_id,
+          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
+          l.log_type,           -- 로그 유형 (book, notice)
+          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          u.name AS user_name,
+          u.id AS user_info,
+          s.name AS seat_name,
+          r.reason AS restriction_reason,
+          a.name AS admin_name
+        FROM 
+          logs l
+        LEFT JOIN 
+          book b ON l.book_id = b.book_id AND l.log_type = 'book'
+        LEFT JOIN 
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+        LEFT JOIN 
+          user u ON b.user_id = u.user_id
+        LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+        LEFT JOIN 
+          book_restriction r ON b.book_id = r.book_id
+        LEFT JOIN 
+          user a ON r.admin_id = a.user_id
+        WHERE 
+          l.type = 'end' -- 퇴실 로그만 조회
+        ORDER BY 
+          l.log_date DESC
+        `
+      );
+    })
+    .then((logs) => {
+      // logs가 배열이 아닐 경우 변환
+      if (!Array.isArray(logs)) {
+        logs = Object.values(logs);
+      }
+
+      if (logs.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "로그 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        logs: logs,
+      });
+    })
+    .catch((err) => {
+      console.error("예약 로그 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 퇴실 로그 조회 API 끝
+
+
+// 강제 퇴실 로그 조회 API 시작
+router.get("/logs/cancel", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          l.log_id,
+          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
+          l.log_type,           -- 로그 유형 (book, notice)
+          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          u.name AS user_name,
+          u.id AS user_info,
+          s.name AS seat_name,
+          r.reason AS restriction_reason,
+          a.name AS admin_name
+        FROM 
+          logs l
+        LEFT JOIN 
+          book b ON l.book_id = b.book_id AND l.log_type = 'book'
+        LEFT JOIN 
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+        LEFT JOIN 
+          user u ON b.user_id = u.user_id
+        LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+        LEFT JOIN 
+          book_restriction r ON b.book_id = r.book_id
+        LEFT JOIN 
+          user a ON r.admin_id = a.user_id
+        WHERE 
+          l.type = 'cancel' -- 강제 퇴실 로그만 조회
+        ORDER BY 
+          l.log_date DESC
+        `
+      );
+    })
+    .then((logs) => {
+      // logs가 배열이 아닐 경우 변환
+      if (!Array.isArray(logs)) {
+        logs = Object.values(logs);
+      }
+
+      if (logs.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "로그 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        logs: logs,
+      });
+    })
+    .catch((err) => {
+      console.error("예약 로그 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 강제 퇴실 로그 조회 API 끝
+
+
+// 공지사항 작성 로그 조회 API 시작
+router.get("/logs/create", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          l.log_id,
+          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
+          l.log_type,           -- 로그 유형 (book, notice)
+          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          u.name AS user_name,
+          u.id AS user_info,
+          s.name AS seat_name,
+          r.reason AS restriction_reason,
+          a.name AS admin_name
+        FROM 
+          logs l
+        LEFT JOIN 
+          book b ON l.book_id = b.book_id AND l.log_type = 'book'
+        LEFT JOIN 
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+        LEFT JOIN 
+          user u ON b.user_id = u.user_id
+        LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+        LEFT JOIN 
+          book_restriction r ON b.book_id = r.book_id
+        LEFT JOIN 
+          user a ON r.admin_id = a.user_id
+        WHERE 
+          l.type = 'create' -- 공지사항 작성 로그만 조회
+        ORDER BY 
+          l.log_date DESC
+        `
+      );
+    })
+    .then((logs) => {
+      // logs가 배열이 아닐 경우 변환
+      if (!Array.isArray(logs)) {
+        logs = Object.values(logs);
+      }
+
+      if (logs.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "로그 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        logs: logs,
+      });
+    })
+    .catch((err) => {
+      console.error("예약 로그 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 공지사항 작성 로그 조회 API 끝
+
+
+// 공지사항 수정 로그 조회 API 시작
+router.get("/logs/edit", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          l.log_id,
+          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
+          l.log_type,           -- 로그 유형 (book, notice)
+          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          u.name AS user_name,
+          u.id AS user_info,
+          s.name AS seat_name,
+          r.reason AS restriction_reason,
+          a.name AS admin_name
+        FROM 
+          logs l
+        LEFT JOIN 
+          book b ON l.book_id = b.book_id AND l.log_type = 'book'
+        LEFT JOIN 
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+        LEFT JOIN 
+          user u ON b.user_id = u.user_id
+        LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+        LEFT JOIN 
+          book_restriction r ON b.book_id = r.book_id
+        LEFT JOIN 
+          user a ON r.admin_id = a.user_id
+        WHERE 
+          l.type = 'edit' -- 공지사항 수정 로그만 조회
+        ORDER BY 
+          l.log_date DESC
+        `
+      );
+    })
+    .then((logs) => {
+      // logs가 배열이 아닐 경우 변환
+      if (!Array.isArray(logs)) {
+        logs = Object.values(logs);
+      }
+
+      if (logs.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "로그 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        logs: logs,
+      });
+    })
+    .catch((err) => {
+      console.error("예약 로그 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 공지사항 수정 로그 조회 API 끝
+
+// 공지사항 삭제 로그 조회 API 시작
+router.get("/logs/delete", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+  db.getConnection()
+    .then((connection) => {
+      return connection.query(
+        `
+        SELECT 
+          l.log_id,
+          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
+          l.log_type,           -- 로그 유형 (book, notice)
+          DATE_FORMAT(l.log_date, '%Y/%m/%d %H:%i') AS log_date,
+          u.name AS user_name,
+          u.id AS user_info,
+          s.name AS seat_name,
+          r.reason AS restriction_reason,
+          a.name AS admin_name
+        FROM 
+          logs l
+        LEFT JOIN 
+          book b ON l.book_id = b.book_id AND l.log_type = 'book'
+        LEFT JOIN 
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+        LEFT JOIN 
+          user u ON b.user_id = u.user_id
+        LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+        LEFT JOIN 
+          book_restriction r ON b.book_id = r.book_id
+        LEFT JOIN 
+          user a ON r.admin_id = a.user_id
+        WHERE 
+          l.type = 'delete' -- 공지사항 삭제 로그만 조회
+        ORDER BY 
+          l.log_date DESC
+        `
+      );
+    })
+    .then((logs) => {
+      // logs가 배열이 아닐 경우 변환
+      if (!Array.isArray(logs)) {
+        logs = Object.values(logs);
+      }
+
+      if (logs.length === 0) {
+        res.status(404).json({
+          success: false,
+          message: "로그 데이터가 없습니다.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        logs: logs,
+      });
+    })
+    .catch((err) => {
+      console.error("예약 로그 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
+      });
+    });
+});
+// 공지사항 삭제 로그 조회 API 끝
+
+
 
 
 
