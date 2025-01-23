@@ -1255,15 +1255,13 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
         s.name AS seat_name,
         l.type AS log_type,
         l.log_date,
-        r.reason AS cancel_reason
+        l.reason AS cancel_reason
     FROM 
         book b
     LEFT JOIN 
         seat s ON b.seat_id = s.seat_id
     LEFT JOIN 
         logs l ON b.book_id = l.book_id AND l.log_type = 'book' AND l.type = 'cancel'
-    LEFT JOIN 
-        book_restriction r ON b.book_id = r.book_id
     WHERE 
         b.user_id = ?
     ORDER BY 

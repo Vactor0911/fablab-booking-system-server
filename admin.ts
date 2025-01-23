@@ -124,7 +124,7 @@ router.get("/seats/:seatName", limiter, authenticateToken, authorizeAdmin, async
 
 // 강제 퇴실 API 시작
 router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-    const { seatId, reason } = req.body;
+    const { seatId, reason, userId } = req.body;
 
     if (!seatId || !reason) {
        res.status(400).json({
@@ -180,17 +180,9 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
       // 예약 로그 기록
       await connection.query(
         `
-        INSERT INTO logs (book_id, log_date, type, log_type) VALUES (?, NOW(), 'cancel', 'book')
+        INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id) VALUES (?, NOW(), 'cancel', 'book', ?, ?)
         `,
-        [book_id]
-      );
-
-      // 예약 제한 테이블에 기록 추가
-      await connection.query(
-        `INSERT INTO book_restriction (seat_id, book_id, admin_id, start_date, end_date, reason) 
-        VALUES (?, ?, ?, NOW(), NOW(), ?)
-        `,
-        [seatId, book_id, req.user.userId, reason]
+        [book_id, reason, userId]
       );
 
       // 이메일 전송
@@ -212,7 +204,7 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
         html: `
           <h1>강제 퇴실 알림</h1>
           <p>${name}님,</p>
-          <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다</p>
+          <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
           <ul>
             <li><strong>좌석 번호:</strong> ${seat_name}</li>
             <li><strong>퇴실 사유:</strong> ${he.encode(reason)}</li>
@@ -304,9 +296,9 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
     // 로그 기록 추가
     await connection.query(
       `
-      INSERT INTO logs (notice_id, log_date, type, log_type) VALUES (?, NOW(), 'edit', 'notice')
+      INSERT INTO logs (notice_id, log_date, type, log_type, admin_id) VALUES (?, NOW(), 'edit', 'notice', ?)
       `,
-      [noticeId]
+      [noticeId, userId]
     );
 
     await connection.commit();
@@ -376,9 +368,9 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
     // 로그 기록 추가
     await connection.query(
       `
-      INSERT INTO logs (notice_id, log_date, type, log_type) VALUES (?, NOW(), 'create', 'notice')
+      INSERT INTO logs (notice_id, log_date, type, log_type, admin_id) VALUES (?, NOW(), 'create', 'notice', ?)
       `,
-      [noticeId]
+      [noticeId, userId]
     );
 
     await connection.commit();
@@ -407,6 +399,7 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
 router.delete("/notice/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
   const { id } = req.params;
   const noticeId = parseInt(id, 10);
+  const { userId } = req.body;
 
   if (isNaN(noticeId)) {
     res.status(400).json({
@@ -440,9 +433,9 @@ router.delete("/notice/:id", csrfProtection, limiter, authenticateToken, authori
     // 삭제 로그 기록
     await connection.query(
       `
-      INSERT INTO logs (notice_id, log_date, type, log_type) VALUES (?, NOW(), 'delete', 'notice')
+      INSERT INTO logs (notice_id, log_date, type, log_type, admin_id) VALUES (?, NOW(), 'delete', 'notice', ?)
       `,
-      [noticeId]
+      [noticeId, userId]
     );
 
     // 공지사항 삭제
@@ -487,7 +480,7 @@ router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdm
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
-          r.reason AS restriction_reason,
+          l.reason AS restriction_reason,
           a.name AS admin_name
         FROM 
           logs l
@@ -500,9 +493,9 @@ router.get("/logs/all", csrfProtection, limiter, authenticateToken, authorizeAdm
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
-          book_restriction r ON b.book_id = r.book_id
-        LEFT JOIN 
-          user a ON r.admin_id = a.user_id
+          user a ON l.admin_id = a.user_id
+        WHERE
+          l.book_id = b.book_id
         ORDER BY 
           l.log_date DESC
         `
@@ -553,7 +546,7 @@ router.get("/logs/book", csrfProtection, limiter, authenticateToken, authorizeAd
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
-          r.reason AS restriction_reason,
+          l.reason AS restriction_reason,
           a.name AS admin_name
         FROM 
           logs l
@@ -566,11 +559,10 @@ router.get("/logs/book", csrfProtection, limiter, authenticateToken, authorizeAd
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
-          book_restriction r ON b.book_id = r.book_id
-        LEFT JOIN 
-          user a ON r.admin_id = a.user_id
+          user a ON l.admin_id = a.user_id
         WHERE 
           l.type = 'book' -- 예약 로그만 조회
+          AND b.book_id = l.book_id
         ORDER BY 
           l.log_date DESC
         `
@@ -620,7 +612,7 @@ router.get("/logs/end", csrfProtection, limiter, authenticateToken, authorizeAdm
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
-          r.reason AS restriction_reason,
+          l.reason AS restriction_reason,
           a.name AS admin_name
         FROM 
           logs l
@@ -633,11 +625,10 @@ router.get("/logs/end", csrfProtection, limiter, authenticateToken, authorizeAdm
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
-          book_restriction r ON b.book_id = r.book_id
-        LEFT JOIN 
-          user a ON r.admin_id = a.user_id
+          user a ON l.admin_id = a.user_id
         WHERE 
           l.type = 'end' -- 퇴실 로그만 조회
+          AND b.book_id = l.book_id
         ORDER BY 
           l.log_date DESC
         `
@@ -687,7 +678,7 @@ router.get("/logs/cancel", csrfProtection, limiter, authenticateToken, authorize
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
-          r.reason AS restriction_reason,
+          l.reason AS restriction_reason,
           a.name AS admin_name
         FROM 
           logs l
@@ -700,11 +691,10 @@ router.get("/logs/cancel", csrfProtection, limiter, authenticateToken, authorize
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
-          book_restriction r ON b.book_id = r.book_id
-        LEFT JOIN 
-          user a ON r.admin_id = a.user_id
+          user a ON l.admin_id = a.user_id
         WHERE 
           l.type = 'cancel' -- 강제 퇴실 로그만 조회
+          AND b.book_id = l.book_id
         ORDER BY 
           l.log_date DESC
         `
@@ -754,22 +744,20 @@ router.get("/logs/create", csrfProtection, limiter, authenticateToken, authorize
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
-          r.reason AS restriction_reason,
+          l.reason AS restriction_reason,
           a.name AS admin_name
         FROM 
           logs l
         LEFT JOIN 
           book b ON l.book_id = b.book_id AND l.log_type = 'book'
         LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice' AND n.admin_id = l.admin_id
         LEFT JOIN 
           user u ON b.user_id = u.user_id
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
-          book_restriction r ON b.book_id = r.book_id
-        LEFT JOIN 
-          user a ON r.admin_id = a.user_id
+          user a ON l.admin_id = a.user_id
         WHERE 
           l.type = 'create' -- 공지사항 작성 로그만 조회
         ORDER BY 
@@ -821,22 +809,20 @@ router.get("/logs/edit", csrfProtection, limiter, authenticateToken, authorizeAd
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
-          r.reason AS restriction_reason,
+          l.reason AS restriction_reason,
           a.name AS admin_name
         FROM 
           logs l
         LEFT JOIN 
           book b ON l.book_id = b.book_id AND l.log_type = 'book'
         LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice' AND n.admin_id = l.admin_id
         LEFT JOIN 
           user u ON b.user_id = u.user_id
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
-          book_restriction r ON b.book_id = r.book_id
-        LEFT JOIN 
-          user a ON r.admin_id = a.user_id
+          user a ON l.admin_id = a.user_id
         WHERE 
           l.type = 'edit' -- 공지사항 수정 로그만 조회
         ORDER BY 
@@ -887,22 +873,20 @@ router.get("/logs/delete", csrfProtection, limiter, authenticateToken, authorize
           u.name AS user_name,
           u.id AS user_info,
           s.name AS seat_name,
-          r.reason AS restriction_reason,
+          l.reason AS restriction_reason,
           a.name AS admin_name
         FROM 
           logs l
         LEFT JOIN 
           book b ON l.book_id = b.book_id AND l.log_type = 'book'
         LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
+          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice' AND n.admin_id = l.admin_id
         LEFT JOIN 
           user u ON b.user_id = u.user_id
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
-          book_restriction r ON b.book_id = r.book_id
-        LEFT JOIN 
-          user a ON r.admin_id = a.user_id
+          user a ON l.admin_id = a.user_id
         WHERE 
           l.type = 'delete' -- 공지사항 삭제 로그만 조회
         ORDER BY 
