@@ -30,6 +30,7 @@ const limiter = rateLimit({
 });
 
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
+import { a } from "vite-node/dist/index-z0R8hVRu.js";
 
 // .env 파일 로드
 dotenv.config();
@@ -202,6 +203,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
+        // 이거 수정 필요할듯? 엑세스 토큰에 해당 정보들 다 필요없을듯,
 
         // Step 4: Refresh Token 발급
         const refreshToken = jwt.sign(
@@ -213,20 +215,10 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
         // Step 5: Refresh Token 저장 (DB)
         return db.query("UPDATE user SET refreshtoken = ? WHERE id = ?", [refreshToken, id])
           .then(() => {
-            // Step 6: 쿠키에 Access Token과 Refresh Token 저장
-            res.cookie("accessToken", accessToken, {
-              httpOnly: true,
-              secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
-              sameSite: "strict", // CSRF 방지 (strict, lax, none) -> 이거 사용보다 그냥 CSRF 토큰 사용하는게 더 안전 -> 따라서 적용
-              //strict : 같은 사이트에서만 쿠키 전송
-              //lax : GET 요청에서만 쿠키 전송
-              //none : 모든 요청에서 쿠키 전송 단 반드시 secure 속성이 true여야 함
-              maxAge: 15 * 60 * 1000, // 15분
-            });
-
+            // Step 6: 쿠키에 Refresh Token 저장
             res.cookie("refreshToken", refreshToken, {
               httpOnly: true,
-              secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)
+              secure: false, // ture : HTTPS 환경에서만 작동, false : HTTP 환경에서도 작동(로컬 환경)- refreshToken만 ture로 설정
               sameSite: "strict", // CSRF 방지 -> 이거 사용보다 그냥 CSRF 토큰 사용하는게 더 안전 -> 따라서 적용
               //strict : 같은 사이트에서만 쿠키 전송
               //lax : GET 요청에서만 쿠키 전송
@@ -241,6 +233,7 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
               name: user.name,
               userId: user.user_id, // 사용자 ID, 프론트에서 사용
               permissions: user.permission, // 사용자 권한, 프론트에서 사용
+              accessToken, // Access Token 반환
             });
           });
       });
@@ -388,7 +381,7 @@ app.post("/users/logout", csrfProtection, (req: Request, res: Response) => {
   const { refreshToken } = req.cookies; // 쿠키에서 Refresh Token 추출
 
   if (!refreshToken) {
-    res.status(400).json({
+    res.status(403).json({
       success: false,
       message: "Refresh Token이 필요합니다.",
     });
@@ -432,9 +425,9 @@ app.post("/users/logout", csrfProtection, (req: Request, res: Response) => {
 // *** 토큰 재발급 API 시작 ***
 app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) => {
   const { refreshToken } = req.cookies; // 쿠키에서 Refresh Token 추출
-
+  
   if (!refreshToken) {
-    res.status(400).json({
+    res.status(403).json({
       success: false,
       message: "Refresh Token이 필요합니다.",
     });
@@ -444,7 +437,7 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
   db.query("SELECT * FROM user WHERE refreshtoken = ?", [refreshToken])
     .then((rows: any) => {
       if (rows.length === 0) {
-        return res.status(403).json({
+        return res.status(404).json({
           success: false,
           message: "유효하지 않은 Refresh Token입니다.",
         });
@@ -459,16 +452,10 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
           { expiresIn: "15m" } // Access Token 만료 시간
         );
 
-        res.cookie("accessToken", newAccessToken, {
-          httpOnly: true,
-          secure: false, // HTTPS 환경에서 true
-          sameSite: "strict",
-          maxAge: 15 * 60 * 1000, // 15분
-        });
-
         return res.status(200).json({
           success: true,
           message: "Access Token이 갱신되었습니다.",
+          accessToken: newAccessToken,
         });
       } catch (err) {
         // Refresh Token 만료 시 DB에서 삭제
@@ -488,43 +475,6 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
     });
 });
 // *** 토큰 재발급 API 끝 ***
-
-
-
-// *** 계정 탈퇴 API 시작 ***
-app.patch("/users/account",csrfProtection, limiter,  authenticateToken, (req: Request, res: Response) => {
-  const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
-
-  if (!userId) {
-    res.status(403).json({
-      success: false,
-      message: "인증된 사용자가 아닙니다.",
-    });
-    return;
-  }
-
-  // Step 1: 사용자 상태를 inactive로 변경하고 Refresh Token 초기화
-  db.query("UPDATE user SET state = 'inactive', refreshtoken = NULL WHERE user_id = ?", [userId])
-    .then(() => {
-      // Step 2: 클라이언트 쿠키 삭제 (로그아웃 처리)
-      res.clearCookie("accessToken");
-      res.clearCookie("refreshToken");
-
-      // Step 3: 응답 반환
-      res.status(200).json({
-        success: true,
-        message: "계정이 성공적으로 탈퇴되었습니다.",
-      });
-    })
-    .catch((err) => {
-      console.error("계정 탈퇴 처리 중 서버 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "계정 탈퇴 처리 중 오류가 발생했습니다.",
-      });
-    });
-});
-// *** 계정 탈퇴 API 끝 ***
 
 
 
@@ -1237,7 +1187,7 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
 // 사용자 정보 수정 API 끝
 
 
-// 예약 정보 조회 API 시작
+// 내 예약 정보 조회 API 시작
 app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req: Request, res: Response) => {
   const userId = req.user?.userId; // 인증된 사용자 ID
   
