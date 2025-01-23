@@ -530,17 +530,14 @@ app.patch("/users/account",csrfProtection, limiter,  authenticateToken, (req: Re
 
 // *** 좌석 예약 생성 API 시작 ***
 app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
-  const { userId, seat_id, book_date } = req.body;
+  const { userId, seat_id } = req.body;
 
   if (!Number.isInteger(seat_id) || seat_id <= 0) {
     res.status(400).json({ success: false, message: "유효하지 않은 좌석 ID입니다." });
     return;
   }
 
-  console.log("변환 전 Booking Date:", book_date);
-  const bookDateKST = moment.tz(book_date, "Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
-  console.log("변환된 Booking Date (KST):", bookDateKST);
-  
+
   let connection;
   try {
     connection = await db.getConnection(); // 데이터베이스 연결
@@ -575,8 +572,8 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
 
     // Step 4: 예약 생성
     const result = await connection.query(
-      "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, ?, 'book')",
-      [userId, seat_id, bookDateKST]
+      "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, NOW(), 'book')",
+      [userId, seat_id ]
     );
 
     // 예약 로그 기록
@@ -1331,8 +1328,8 @@ app.get("/notice/:id", async (req: Request, res: Response) => {
       SELECT 
         n.notice_id, 
         n.title, 
-        n.content, 
-        n.date, 
+        n.content,
+        DATE_FORMAT(n.date, '%Y-%m-%d') AS created_date,
         u.name AS author_name, 
         n.views
       FROM notice n
