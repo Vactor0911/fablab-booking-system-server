@@ -553,8 +553,6 @@ router.get("/logs/book", csrfProtection, limiter, authenticateToken, authorizeAd
         LEFT JOIN 
           book b ON l.book_id = b.book_id AND l.log_type = 'book'
         LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
-        LEFT JOIN 
           user u ON b.user_id = u.user_id
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
@@ -619,8 +617,6 @@ router.get("/logs/end", csrfProtection, limiter, authenticateToken, authorizeAdm
         LEFT JOIN 
           book b ON l.book_id = b.book_id AND l.log_type = 'book'
         LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
-        LEFT JOIN 
           user u ON b.user_id = u.user_id
         LEFT JOIN 
           seat s ON b.seat_id = s.seat_id
@@ -684,8 +680,6 @@ router.get("/logs/cancel", csrfProtection, limiter, authenticateToken, authorize
           logs l
         LEFT JOIN 
           book b ON l.book_id = b.book_id AND l.log_type = 'book'
-        LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
         LEFT JOIN 
           user u ON b.user_id = u.user_id
         LEFT JOIN 
@@ -1125,7 +1119,127 @@ router.patch("/users/:user_id", csrfProtection, limiter, authenticateToken, auth
 // 사용자 정보 수정 API 끝
 
 
+// 예약 제한 목록 조회 API 시작
+router.get("/book/restriction", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const query = `
+    SELECT 
+          br.notice_id,
+          n.title AS notice_title,
+          a.name AS admin_name,
+          COUNT(br.seat_id) AS total_seats, -- 좌석 개수
+          GROUP_CONCAT(DISTINCT s.name ORDER BY s.name ASC) AS seat_names, -- 좌석 이름 그룹화
+          DATE_FORMAT(MIN(br.restriction_start_date), '%Y-%m-%d %H:%i') AS restriction_start_date, -- 제한 시작일
+          DATE_FORMAT(MAX(br.restriction_end_date), '%Y-%m-%d %H:%i') AS restriction_end_date -- 제한 종료일
+      FROM 
+          book_restriction br
+      LEFT JOIN 
+          notice n ON br.notice_id = n.notice_id
+      LEFT JOIN 
+          user a ON br.admin_id = a.user_id
+      LEFT JOIN 
+          seat s ON br.seat_id = s.seat_id
+      GROUP BY 
+          br.notice_id, n.title, a.name
+      ORDER BY 
+          MIN(br.restriction_start_date) DESC;
+    `;
 
+    // 쿼리 실행
+    const results = await db.execute(query);
+
+    res.status(200).json({
+        success: true,
+        restrictions: results.map(row => ({
+          notice_id: row.notice_id,
+          notice_title: row.notice_title,
+          admin_name: row.admin_name,
+          total_seats: row.total_seats,
+          seat_names: row.seat_names,
+          restriction_start_date: row.restriction_start_date,
+          restriction_end_date: row.restriction_end_date,
+        })),
+      });
+      
+  } catch (err) {
+    console.error("예약 제한 목록 조회 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "예약 제한 목록을 조회하는 중 오류가 발생했습니다.",
+    });
+  }
+
+});
+// 예약 제한 목록 조회 API 끝
+
+
+// 예약 제한 생성 API 시작
+router.post("/book/restriction", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { selectedSeats, startDate, endDate, selectedNotice, userId } = req.body;
+
+  if (!selectedSeats || !startDate || !endDate) {
+    res.status(400).json({ 
+      success: false, 
+      message: "필수 입력값이 누락되었습니다." 
+    });
+  }
+
+  let connection: any;
+  try {
+    connection = await db.getConnection();
+
+    // 트랜잭션 시작
+    await connection.beginTransaction();
+
+    // 예약 제한 데이터 삽입
+    for (const seat of selectedSeats) {
+      const restrictionResult = await connection.query(
+        `
+        INSERT INTO book_restriction (seat_id, seat_name, restriction_start_date, restriction_end_date, notice_id, admin_id) 
+        VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [seat.seat_id, seat.seat_name, startDate, endDate, selectedNotice, userId]
+      );
+      // 생성된 restriction_id 가져오기
+      const restrictionId = restrictionResult.insertId;
+
+      // 예약 제한 생성 로그 기록
+      await connection.query(
+        `
+        INSERT INTO logs (log_date, type, log_type, admin_id, restriction_id, notice_id) 
+        VALUES (NOW(), 'create', 'restriction', ?, ?, ?)
+        `,
+        [userId, restrictionId, selectedNotice]
+      );
+    }
+
+    // 트랜잭션 커밋
+    await connection.commit();
+    connection.release();
+
+    res.status(201).json({ success: true, message: "예약 제한이 성공적으로 생성되었습니다." });
+  } catch (error) {
+    console.error("예약 제한 생성 중 오류 발생:", error);
+
+    // 트랜잭션 롤백
+    if (connection) await connection.rollback();
+
+    res.status(500).json({ 
+      success: false, 
+      message: "예약 제한 생성 중 오류가 발생했습니다." 
+    });
+  }
+});
+// 예약 제한 생성 API 끝
+
+
+
+// 예약 제한 취소 API 시작
+router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+
+  
+});
+// 예약 제한 취소 API 끝
 
 
 
