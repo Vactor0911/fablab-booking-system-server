@@ -134,10 +134,10 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
       return;
     }
     // 특수문자 검증 (허용되지 않는 특수문자 체크)
-    if (!validator.isLength(reason, { max: 100 }) || /[`<>]/.test(reason)) {
+    if (!validator.isLength(reason, { max: 100 }) || /[`<>-]/.test(reason)) {
       res.status(400).json({
         success: false,
-        message: "퇴실 사유는 최대 100자의 텍스트이며, <, >, ` 문자는 허용되지 않습니다.",
+        message: "퇴실 사유는 최대 100자의 텍스트이며, <, >, `, - 문자는 허용되지 않습니다.",
       });
       return;
     }
@@ -1611,6 +1611,15 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
 
   if( available_start_time > available_end_time ) {
     res.status(400).json({ success: false, message: "예약 가능 시간이 올바르지 않습니다." });
+  }
+
+  // 특수문자 검증 (허용되지 않는 특수문자 체크)
+  if (!validator.isLength(basic_manners, { max: 200 }) || /[`<>-]/.test(basic_manners)) {
+    res.status(400).json({
+      success: false,
+      message: "퇴실 사유는 최대 200자의 텍스트이며, <, >, `, - 문자는 허용되지 않습니다.",
+    });
+    return;
   }
 
   try {
