@@ -1170,6 +1170,83 @@ router.get("/book/restriction", csrfProtection, limiter, authenticateToken, auth
 // 예약 제한 목록 조회 API 끝
 
 
+// 특정 예약 제한 정보 조회 API 시작
+router.get("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { id } = req.params; // 예약 제한 ID 가져오기
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+
+    // 예약 제한 정보 조회
+    const rows = await connection.query(
+      `
+      SELECT 
+        br.restriction_id,
+        br.notice_id,
+        n.title AS notice_title,
+        DATE_FORMAT(br.restriction_start_date, '%Y-%m-%d %H:%i') AS startDate,
+        DATE_FORMAT(br.restriction_end_date, '%Y-%m-%d %H:%i') AS endDate,
+        br.seat_names
+      FROM book_restriction br
+      LEFT JOIN notice n ON br.notice_id = n.notice_id
+      WHERE br.restriction_id = ?
+      `,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        message: "해당 예약 제한 정보를 찾을 수 없습니다.",
+      });
+      return;
+    }
+    const restrictionInfo = rows[0];
+
+    // 좌석 데이터 파싱
+    const seatNames = restrictionInfo.seat_names
+      ? restrictionInfo.seat_names.split(",").map((seat) => seat.trim())
+      : [];
+
+    res.status(200).json({
+      success: true,
+      restrictions: {
+        restriction_id: restrictionInfo.restriction_id,
+        notice_id: restrictionInfo.notice_id,
+        notice_title: restrictionInfo.notice_title,
+        restriction_start_date: restrictionInfo.startDate,
+        restriction_end_date: restrictionInfo.endDate,
+        seat_names: seatNames,
+      },
+    });
+
+    console.log("보낸 데이터:", 
+      {
+        success: true,
+        restriction: {
+          restriction_id: restrictionInfo.restriction_id,
+          notice_id: restrictionInfo.notice_id,
+          notice_title: restrictionInfo.notice_title,
+          startDate: restrictionInfo.startDate,
+          endDate: restrictionInfo.endDate,
+          seats: seatNames,
+        },
+      }
+    );
+  } catch (error) {
+    console.error("예약 제한 정보를 조회하는 중 오류 발생:", error);
+    res.status(500).json({
+      success: false,
+      message: "예약 제한 정보를 조회하는 중 서버 오류가 발생했습니다.",
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+// 특정 예약 제한 정보 조회 API 시작
+
+
 
 
 
@@ -1208,7 +1285,6 @@ router.post("/book/restriction", csrfProtection, limiter, authenticateToken, aut
           `,
           [seatId, endDate, startDate]
         );
-        console.log('예약 제한 시간에 사용중인 사용자 정보 : ',reservation);
 
         if (reservation.length > 0) {
           const { book_id, email, name, seat_name } = reservation[0];
