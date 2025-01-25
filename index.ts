@@ -624,7 +624,7 @@ app.get("/seats", limiter, authenticateToken, async (req, res) => {
         type,
         pc_surpport,
         image_path,
-        basic_manners,
+        (SELECT basic_manners FROM default_settings LIMIT 1) AS basic_manners,
         warning,
         (SELECT state FROM book WHERE seat.seat_id = book.seat_id AND book.state = 'book' LIMIT 1) AS state
       FROM seat
@@ -634,6 +634,7 @@ app.get("/seats", limiter, authenticateToken, async (req, res) => {
       success: true,
       seats: rows, // 좌석 데이터 반환
     });
+
   } catch (err) {
     console.error("좌석 데이터를 가져오는 중 오류 발생:", err);
     res.status(500).json({

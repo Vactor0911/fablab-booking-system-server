@@ -74,7 +74,7 @@ router.get("/seats/:seatName", limiter, authenticateToken, authorizeAdmin, async
         s.type,
         s.pc_surpport,
         s.image_path,
-        s.basic_manners,
+        (SELECT basic_manners FROM default_settings LIMIT 1) AS basic_manners,
         s.warning,
         DATE_FORMAT(b.book_date, '%Y-%m-%d') AS reservation_date,
         TIME_FORMAT(b.book_date, '%H:%i') AS reservation_time,
@@ -1572,6 +1572,75 @@ router.delete("/book/restriction/:id", csrfProtection, limiter, authenticateToke
 }
 );
 // 특정 예약 제한 삭제 API 끝
+
+// 기본 설정 조회 API 시작
+router.get("/default-settings", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const [settings] = await db.query(`
+      SELECT 
+        available_start_time, 
+        available_end_time, 
+        basic_manners 
+      FROM default_settings 
+      WHERE setting_id = 1
+    `);
+
+    if (!settings) {
+      res.status(404).json({ success: false, message: "설정 정보를 찾을 수 없습니다." });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      data: settings 
+    });
+  } catch (error) {
+    console.error("기본 설정 가져오기 중 오류 발생:", error);
+    res.status(500).json({ success: false, message: "기본 설정 가져오기 중 오류가 발생했습니다." });
+  }
+});
+// 기본 설정 조회 API 끝
+
+
+// 기본 설정 수정 API 시작
+router.patch("/default-settings", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { available_start_time, available_end_time, basic_manners } = req.body;
+
+  if (!available_start_time || !available_end_time || !basic_manners) {
+    res.status(400).json({ success: false, message: "필수 입력값이 누락되었습니다." });
+  }
+
+  if( available_start_time > available_end_time ) {
+    res.status(400).json({ success: false, message: "예약 가능 시간이 올바르지 않습니다." });
+  }
+
+  try {
+    const result = await db.query(
+      `
+      UPDATE default_settings
+      SET 
+        available_start_time = ?, 
+        available_end_time = ?, 
+        basic_manners = ?
+      WHERE setting_id = 1
+      `,
+      [available_start_time, available_end_time, basic_manners]
+    );
+
+    if (result.affectedRows === 0) {
+      res.status(404).json({ success: false, message: "업데이트할 설정 정보를 찾을 수 없습니다." });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: "설정 정보가 성공적으로 업데이트되었습니다." 
+    });
+  } catch (error) {
+    console.error("기본 설정 업데이트 중 오류 발생:", error);
+    res.status(500).json({ success: false, message: "기본 설정 업데이트 중 오류가 발생했습니다." });
+  }
+}
+);
+// 기본 설정 수정 API 끝
 
 
 
