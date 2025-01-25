@@ -1123,44 +1123,42 @@ router.patch("/users/:user_id", csrfProtection, limiter, authenticateToken, auth
 router.get("/book/restriction", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const query = `
-    SELECT 
+      SELECT 
+          br.restriction_id,
           br.notice_id,
           n.title AS notice_title,
           a.name AS admin_name,
-          COUNT(br.seat_id) AS total_seats, -- 좌석 개수
-          GROUP_CONCAT(DISTINCT s.name ORDER BY s.name ASC) AS seat_names, -- 좌석 이름 그룹화
-          DATE_FORMAT(MIN(br.restriction_start_date), '%Y-%m-%d %H:%i') AS restriction_start_date, -- 제한 시작일
-          DATE_FORMAT(MAX(br.restriction_end_date), '%Y-%m-%d %H:%i') AS restriction_end_date -- 제한 종료일
+          br.seat_names, -- 저장된 좌석 이름들
+          DATE_FORMAT(br.restriction_start_date, '%Y-%m-%d %H:%i') AS restriction_start_date,
+          DATE_FORMAT(br.restriction_end_date, '%Y-%m-%d %H:%i') AS restriction_end_date
       FROM 
           book_restriction br
       LEFT JOIN 
           notice n ON br.notice_id = n.notice_id
       LEFT JOIN 
           user a ON br.admin_id = a.user_id
-      LEFT JOIN 
-          seat s ON br.seat_id = s.seat_id
-      GROUP BY 
-          br.notice_id, n.title, a.name
       ORDER BY 
-          MIN(br.restriction_start_date) DESC;
+          br.restriction_start_date DESC;
     `;
 
     // 쿼리 실행
     const results = await db.execute(query);
 
+    // 응답 데이터 포맷
+    const formattedResults = results.map(row => ({
+      restriction_id: row.restriction_id,
+      notice_id: row.notice_id,
+      notice_title: row.notice_title,
+      admin_name: row.admin_name,
+      seat_names: row.seat_names.split(", "), // 좌석 이름 문자열을 배열로 변환
+      restriction_start_date: row.restriction_start_date,
+      restriction_end_date: row.restriction_end_date,
+    }));
+
     res.status(200).json({
-        success: true,
-        restrictions: results.map(row => ({
-          notice_id: row.notice_id,
-          notice_title: row.notice_title,
-          admin_name: row.admin_name,
-          total_seats: row.total_seats,
-          seat_names: row.seat_names,
-          restriction_start_date: row.restriction_start_date,
-          restriction_end_date: row.restriction_end_date,
-        })),
-      });
-      
+      success: true,
+      restrictions: formattedResults,
+    });
   } catch (err) {
     console.error("예약 제한 목록 조회 중 오류 발생:", err);
     res.status(500).json({
@@ -1168,60 +1166,140 @@ router.get("/book/restriction", csrfProtection, limiter, authenticateToken, auth
       message: "예약 제한 목록을 조회하는 중 오류가 발생했습니다.",
     });
   }
-
 });
 // 예약 제한 목록 조회 API 끝
 
 
+
+
+
 // 예약 제한 생성 API 시작
 router.post("/book/restriction", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-  const { selectedSeats, startDate, endDate, selectedNotice, userId } = req.body;
+  const { selectedSeats, seatNames, startDate, endDate, selectedNotice, userId } = req.body;
 
-  if (!selectedSeats || !startDate || !endDate) {
+  if (!selectedSeats || !startDate || !endDate || !seatNames) {
     res.status(400).json({ 
       success: false, 
       message: "필수 입력값이 누락되었습니다." 
     });
   }
 
-  let connection: any;
+  let connection;
   try {
     connection = await db.getConnection();
 
     // 트랜잭션 시작
     await connection.beginTransaction();
 
-    // 예약 제한 데이터 삽입
+    // 강제 퇴실 처리
     for (const seat of selectedSeats) {
-      const restrictionResult = await connection.query(
-        `
-        INSERT INTO book_restriction (seat_id, seat_name, restriction_start_date, restriction_end_date, notice_id, admin_id) 
-        VALUES (?, ?, ?, ?, ?, ?)
-        `,
-        [seat.seat_id, seat.seat_name, startDate, endDate, selectedNotice, userId]
-      );
-      // 생성된 restriction_id 가져오기
-      const restrictionId = restrictionResult.insertId;
+      if (seat.state === "book") {
+        const { seat_id: seatId } = seat;
 
-      // 예약 제한 생성 로그 기록
-      await connection.query(
-        `
-        INSERT INTO logs (log_date, type, log_type, admin_id, restriction_id, notice_id) 
-        VALUES (NOW(), 'create', 'restriction', ?, ?, ?)
-        `,
-        [userId, restrictionId, selectedNotice]
-      );
+        // 예약 정보 가져오기
+        const reservation = await connection.query(
+          `
+          SELECT b.book_id, b.user_id, u.email, u.name, s.name AS seat_name 
+          FROM book b
+          LEFT JOIN user u ON b.user_id = u.user_id
+          LEFT JOIN seat s ON b.seat_id = s.seat_id
+          WHERE b.seat_id = ? AND b.state = 'book' AND 
+          b.book_date <= ? AND b.book_date >= ?
+          `,
+          [seatId, endDate, startDate]
+        );
+        console.log('예약 제한 시간에 사용중인 사용자 정보 : ',reservation);
+
+        if (reservation.length > 0) {
+          const { book_id, email, name, seat_name } = reservation[0];
+
+          // 예약 상태를 'cancel'로 업데이트
+          await connection.query(
+            `
+            UPDATE book 
+            SET state = 'cancel' 
+            WHERE book_id = ? AND state = 'book'
+            `,
+            [book_id]
+          );
+
+          // 예약 로그 기록
+          await connection.query(
+            `
+            INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id) 
+            VALUES (?, NOW(), 'cancel', 'book', '관리자 설정으로 좌석 예약이 제한되고 있습니다.', ?)
+            `,
+            [book_id, userId]
+          );
+
+          // 이메일 전송
+          const transporter = nodemailer.createTransport({
+            service: "gmail",
+            host: "smtp.gmail.com",
+            port: 587,
+            secure: false,
+            auth: {
+              user: process.env.NODEMAILER_USER,
+              pass: process.env.NODEMAILER_PASS,
+            },
+          });
+
+          const mailOptions = {
+            from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+            to: email,
+            subject: `[FabLab 예약 시스템] ${seat_name} 강제 퇴실 알림`,
+            html: `
+              <h1>강제 퇴실 알림</h1>
+              <p>${name}님,</p>
+              <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
+              <ul>
+                <li><strong>좌석 번호:</strong> ${seat_name}</li>
+                <li><strong>퇴실 사유:</strong> 관리자 설정으로 좌석 예약이 제한되고 있습니다.</li>
+              </ul>
+              <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
+            `,
+          };
+
+          try {
+            await transporter.sendMail(mailOptions);
+          } catch (emailError) {
+            console.error("이메일 전송 중 오류 발생:", emailError);
+          }
+        }
+      }
     }
+
+    // 예약 제한 데이터 삽입
+    const restrictionResult = await connection.query(
+      `
+      INSERT INTO book_restriction (seat_names, restriction_start_date, restriction_end_date, notice_id, admin_id) 
+      VALUES (?, ?, ?, ?, ?)
+      `,
+      [seatNames, startDate, endDate, selectedNotice, userId]
+    );
+
+    const restrictionId = restrictionResult.insertId;
+
+    // 예약 제한 생성 로그 기록
+    await connection.query(
+      `
+      INSERT INTO logs (log_date, type, log_type, admin_id, restriction_id, notice_id) 
+      VALUES (NOW(), 'create', 'restriction', ?, ?, ?)
+      `,
+      [userId, restrictionId, selectedNotice]
+    );
 
     // 트랜잭션 커밋
     await connection.commit();
     connection.release();
 
-    res.status(201).json({ success: true, message: "예약 제한이 성공적으로 생성되었습니다." });
+    res.status(201).json({ 
+      success: true, 
+      message: "예약 제한이 성공적으로 생성되었습니다." 
+    });
   } catch (error) {
     console.error("예약 제한 생성 중 오류 발생:", error);
 
-    // 트랜잭션 롤백
     if (connection) await connection.rollback();
 
     res.status(500).json({ 

@@ -1220,7 +1220,10 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
     [userId]
   )
   .then((rows: any[]) => {
-    res.status(200).json({ success: true, reservations: rows });
+    res.status(200).json({ 
+      success: true, 
+      reservations: rows 
+    });
   })
   .catch((err: any) => {
     console.error("예약 정보 조회 중 오류 발생:", err);
