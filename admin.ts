@@ -1221,19 +1221,6 @@ router.get("/book/restriction/:id", csrfProtection, limiter, authenticateToken, 
       },
     });
 
-    console.log("보낸 데이터:", 
-      {
-        success: true,
-        restriction: {
-          restriction_id: restrictionInfo.restriction_id,
-          notice_id: restrictionInfo.notice_id,
-          notice_title: restrictionInfo.notice_title,
-          startDate: restrictionInfo.startDate,
-          endDate: restrictionInfo.endDate,
-          seats: seatNames,
-        },
-      }
-    );
   } catch (error) {
     console.error("예약 제한 정보를 조회하는 중 오류 발생:", error);
     res.status(500).json({
@@ -1245,9 +1232,6 @@ router.get("/book/restriction/:id", csrfProtection, limiter, authenticateToken, 
   }
 });
 // 특정 예약 제한 정보 조회 API 시작
-
-
-
 
 
 // 예약 제한 생성 API 시작
@@ -1387,13 +1371,151 @@ router.post("/book/restriction", csrfProtection, limiter, authenticateToken, aut
 // 예약 제한 생성 API 끝
 
 
+// 특정 예약 제한 수정 API 시작
+router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { id } = req.params; // 예약 제한 ID
+  const { selectedSeats, seatNames, startDate, endDate, selectedNotice, userId } = req.body;
 
-// 예약 제한 취소 API 시작
+  if (!selectedSeats || !startDate || !endDate || !seatNames) {
+    res.status(400).json({
+      success: false,
+      message: "필수 입력값이 누락되었습니다.",
+    });
+    return;
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+
+    // 트랜잭션 시작
+    await connection.beginTransaction();
+
+    // 강제 퇴실 처리 (이미 예약된 좌석 처리)
+    for (const seat of selectedSeats) {
+      if (seat.state === "book") {
+        const { seat_id: seatId } = seat;
+
+        const reservation = await connection.query(
+          `
+          SELECT b.book_id, b.user_id, u.email, u.name, s.name AS seat_name
+          FROM book b
+          LEFT JOIN user u ON b.user_id = u.user_id
+          LEFT JOIN seat s ON b.seat_id = s.seat_id
+          WHERE b.seat_id = ? AND b.state = 'book' AND 
+          b.book_date <= ? AND b.book_date >= ?
+          `,
+          [seatId, endDate, startDate]
+        );
+
+        if (reservation.length > 0) {
+          const { book_id, email, name, seat_name } = reservation[0];
+
+          // 예약 상태를 'cancel'로 업데이트
+          await connection.query(
+            `
+            UPDATE book
+            SET state = 'cancel'
+            WHERE book_id = ? AND state = 'book'
+            `,
+            [book_id]
+          );
+
+          // 예약 로그 기록
+          await connection.query(
+            `
+            INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id)
+            VALUES (?, NOW(), 'cancel', 'book', '관리자 설정으로 좌석 예약이 제한되었습니다.', ?)
+            `,
+            [book_id, userId]
+          );
+
+          // 이메일 전송
+          const transporter = nodemailer.createTransport({
+            service: "gmail",
+            host: "smtp.gmail.com",
+            port: 587,
+            secure: false,
+            auth: {
+              user: process.env.NODEMAILER_USER,
+              pass: process.env.NODEMAILER_PASS,
+            },
+          });
+
+          const mailOptions = {
+            from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+            to: email,
+            subject: `[FabLab 예약 시스템] ${seat_name} 강제 퇴실 알림`,
+            html: `
+              <h1>강제 퇴실 알림</h1>
+              <p>${name}님,</p>
+              <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
+              <ul>
+                <li><strong>좌석 번호:</strong> ${seat_name}</li>
+                <li><strong>퇴실 사유:</strong> 관리자 설정으로 좌석 예약이 제한되었습니다.</li>
+              </ul>
+              <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
+            `,
+          };
+
+          try {
+            await transporter.sendMail(mailOptions);
+          } catch (emailError) {
+            console.error("이메일 전송 중 오류 발생:", emailError);
+          }
+        }
+      }
+    }
+
+    // 예약 제한 업데이트
+    await connection.query(
+      `
+      UPDATE book_restriction
+      SET seat_names = ?, restriction_start_date = ?, restriction_end_date = ?, notice_id = ?
+      WHERE restriction_id = ?
+      `,
+      [seatNames, startDate, endDate, selectedNotice, id]
+    );
+
+
+    // 예약 제한 수정 로그 기록
+    await connection.query(
+      `
+      INSERT INTO logs (log_date, type, log_type, admin_id, restriction_id, notice_id)
+      VALUES (NOW(), 'edit', 'restriction', ?, ?, ?)
+      `,
+      [userId, id, selectedNotice]
+    );
+
+    // 트랜잭션 커밋
+    await connection.commit();
+    connection.release();
+
+    res.status(200).json({
+      success: true,
+      message: "예약 제한이 성공적으로 수정되었습니다.",
+    });
+  } catch (error) {
+    console.error("예약 제한 수정 중 오류 발생:", error);
+
+    if (connection) await connection.rollback();
+
+    res.status(500).json({
+      success: false,
+      message: "예약 제한 수정 중 서버 오류가 발생했습니다.",
+    });
+  }
+}
+);
+// 특정 예약 제한 수정 API 끝
+
+
+// 특정 예약 제한 삭제 API 시작
 router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
 
   
 });
-// 예약 제한 취소 API 끝
+// 특정 예약 제한 삭제 API 끝
 
 
 
