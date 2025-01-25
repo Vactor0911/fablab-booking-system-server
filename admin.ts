@@ -1511,10 +1511,66 @@ router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken
 
 
 // 특정 예약 제한 삭제 API 시작
-router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
+router.delete("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.body;
 
-  
-});
+  let connection;
+  try {
+    connection = await db.getConnection();
+
+    // 트랜잭션 시작
+    await connection.beginTransaction();
+
+    // 예약 제한 데이터 확인
+    const restriction = await connection.query(
+      `SELECT restriction_id, seat_names FROM book_restriction WHERE restriction_id = ?`,
+      [id]
+    );
+
+    if (!restriction || restriction.length === 0) {
+      res.status(404).json({
+        success: false,
+        message: "삭제할 예약 제한이 존재하지 않습니다.",
+      });
+    }
+
+    // const seatNames = restriction[0].seat_names.split(", ").map((seat) => seat.trim());
+
+    // 로그 기록
+    await connection.query(
+      `
+      INSERT INTO logs (log_date, type, log_type, admin_id, restriction_id) 
+      VALUES (NOW(), 'delete', 'restriction', ?, ? )
+      `,
+      [userId, id]
+    );
+
+    // 삭제 처리
+    await connection.query(
+      `DELETE FROM book_restriction WHERE restriction_id = ?`,
+      [id]
+    );
+
+    // 트랜잭션 커밋
+    await connection.commit();
+    connection.release();
+
+    res.status(200).json({
+      success: true,
+      message: "예약 제한이 성공적으로 삭제되었습니다.",
+    });
+  } catch (error) {
+    console.error("예약 제한 삭제 중 오류 발생:", error);
+
+    if (connection) await connection.rollback();
+    res.status(500).json({
+      success: false,
+      message: "예약 제한 삭제 중 오류가 발생했습니다.",
+    });
+  }
+}
+);
 // 특정 예약 제한 삭제 API 끝
 
 
