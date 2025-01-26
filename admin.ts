@@ -1,6 +1,6 @@
 // 어드민 관련 API
 
-import express from "express";
+import express, { Request, Express } from "express";
 import { authenticateToken, authorizeAdmin } from "./middleware/authenticate";
 import { db } from "./index.ts";
 import RateLimit from "express-rate-limit";
@@ -9,6 +9,14 @@ import validator from "validator"; // 유효성 검사 라이브러리
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
 import he from "he";  // HTML 인코딩 라이브러리
 import bcrypt from "bcrypt";  // 비밀번호 해싱 라이브러리
+import crypto from "crypto"; // 파일 해시 계산을 위해 추가
+
+import multer from "multer"; // 파일 업로드 라이브러리
+import path from "path";  // 경로 라이브러리
+import fs from "fs";  // 파일 시스템 라이브러리
+
+
+
 const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
 
 // Rate Limit 설정
@@ -27,6 +35,60 @@ const csrfProtection = csurf({
     sameSite: "strict", // CSRF 보호를 위한 설정
   },
 });
+
+
+// 이미지 파일 업로드를 위한 Multer 설정 시작
+
+// Multer 설정
+const uploadDir = path.join(__dirname, "../fablab-booking-system-server/image"); // 이미지 업로드 경로, __dirname은 현재 파일의 경로 예) E:
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true }); // 폴더 없으면 생성
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir); // 업로드 경로 설정
+  },
+
+  filename: async (req, file, cb) => {
+    try {
+      const filePath = path.join(uploadDir, file.originalname);
+
+      // 동일한 파일이 존재하는지 확인
+      if (fs.existsSync(filePath)) {
+        req.existingImagePath = `/image/${file.originalname}`; // 기존 파일 경로 저장
+        return cb(null, file.originalname); // 기존 파일 이름 그대로 사용
+      }
+
+      // 새 파일일 경우 고유 이름 생성
+      const uniqueName = `${file.originalname}`;
+      req.existingImagePath = `/image/${uniqueName}`; // 새 파일 경로 저장
+      cb(null, uniqueName);
+    } catch (err) {
+      console.error("파일 처리 중 오류 발생:", err);
+      cb(err, null);
+    }
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedMimeTypes = ["image/jpeg", "image/png", "image/gif"];
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("지원되지 않는 파일 형식입니다. (JPEG, PNG, GIF만 허용)"), false);
+  }
+};
+
+const upload = multer({ storage, fileFilter });
+
+// 이미지 파일 업로드를 위한 Multer 설정 끝
+
+
+
+// ----------------- API 라우트 -----------------
+
+
 
 // 모든 좌석과 예약 정보 조회 (관리자 전용) - 이미 route가 /admin이므로 /admin/seats로 설정하지 않아도 됨
 router.get("/seats", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
@@ -96,6 +158,15 @@ router.get("/seats/:seatName", limiter, authenticateToken, authorizeAdmin, async
       return;
     }
 
+    // 이미지 파일 읽기 및 Base64 인코딩
+    let imageBase64 = ''; // 이미지 Base64 데이터
+    const absoluteImagePath = path.join(uploadDir, path.basename(seat.image_path || ""));
+
+    if (fs.existsSync(absoluteImagePath)) {
+      const imageBuffer = fs.readFileSync(absoluteImagePath); // 이미지 파일 읽기
+      imageBase64 = `data:image/png;base64,${imageBuffer.toString("base64")}`; // Base64 변환
+    }
+
     // API 응답
     res.status(200).json({
       success: true,
@@ -108,7 +179,7 @@ router.get("/seats/:seatName", limiter, authenticateToken, authorizeAdmin, async
         userName: seat.user_name || "없음",
         basicManners: seat.basic_manners,
         warning: seat.warning,
-        imagePath: seat.image_path || "/placeholder.jpg", // 기본 이미지 경로
+        image: imageBase64, // 이미지 데이터를 포함
       },
     });
   } catch (err) {
@@ -1650,6 +1721,76 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
 }
 );
 // 기본 설정 수정 API 끝
+
+
+
+// 좌석 정보 수정 API 시작
+router.patch("/update-seat", csrfProtection, limiter, authenticateToken, authorizeAdmin, upload.single("image"), async (req: Request & { existingImagePath?: string, file?: multer.File }, res) => {
+  let  { selectedSeats, warning, pcUsage } = req.body;
+  try {
+
+    // JSON으로 전송된 selectedSeats를 파싱
+    selectedSeats = JSON.parse(selectedSeats);
+
+    // 유효성 검사
+    if (!selectedSeats || !Array.isArray(selectedSeats) || selectedSeats.length === 0) {
+      res.status(400).json({ success: false, message: "유효한 좌석 정보가 필요합니다." });
+      return;
+    }
+
+    // 이미지 경로 설정
+    
+    const imagePath = req.existingImagePath || `/image/${req.file.filename}`;
+
+    let connection;
+    try {
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+
+      for (const seat of selectedSeats) {
+        if (!seat.seat_id || !seat.seat_name) {
+          throw new Error("유효하지 않은 좌석 정보가 포함되어 있습니다.");
+        }
+
+        await connection.query(
+          `
+          UPDATE seat
+          SET 
+            warning = ?, 
+            pc_surpport = ?, 
+            image_path = ?
+          WHERE seat_id = ?
+          `,
+          [warning || null, pcUsage || "none", imagePath, seat.seat_id]
+        );
+      }
+
+      await connection.commit();
+
+      res.status(200).json({
+        success: true,
+        message: "좌석 정보가 성공적으로 수정되었습니다.",
+      });
+    } catch (err) {
+      if (connection) await connection.rollback();
+      console.error("좌석 정보 수정 중 오류 발생:", err);
+
+      res.status(500).json({
+        success: false,
+        message: "좌석 정보 수정 중 오류가 발생했습니다.",
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  } catch (err) {
+    console.error("좌석 정보 수정 처리 중 오류:", err);
+    res.status(500).json({
+      success: false,
+      message: "좌석 정보 수정 중 오류가 발생했습니다.",
+    });
+  }
+});
+// 좌석 정보 수정 API 끝
 
 
 

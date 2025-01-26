@@ -16,6 +16,11 @@ import csurf from "csurf";
 import validator from "validator"; // 유효성 검사 라이브러리
 const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
 
+import path from "path";  // 경로 라이브러리
+import fs from "fs";  // 파일 시스템 라이브러리
+
+const uploadDir = path.join(__dirname, "../fablab-booking-system-server/image"); // 이미지 업로드 경로, __dirname은 현재 파일의 경로 예) E:
+
 // Request 타입 확장
 declare module "express" {
   export interface Request {
@@ -644,6 +649,65 @@ app.get("/seats", limiter, authenticateToken, async (req, res) => {
   }
 });
 // 좌석 데이터 제공 API 끝
+
+// 특정 좌석 정보 조회 API 시작
+app.get("/seats/:seatName", limiter, authenticateToken,  async (req, res) => {
+  const { seatName } = req.params;
+
+  try {
+    // 좌석 정보와 예약 정보를 조인하여 가져오기
+    const [seat] = await db.query(
+      `
+      SELECT 
+        seat_id,
+        name AS seat_name,
+        pc_surpport,
+        image_path,
+        (SELECT basic_manners FROM default_settings LIMIT 1) AS basic_manners,
+        warning
+      FROM seat
+      WHERE name = ?
+      `,
+      [seatName]
+    );
+
+    if (!seat) {
+      res.status(404).json({
+        success: false,
+        message: "해당 좌석 정보를 찾을 수 없습니다.",
+      });
+      return;
+    }
+
+    // 이미지 파일 읽기 및 Base64 인코딩
+    let imageBase64 = ''; // 이미지 Base64 데이터
+    const absoluteImagePath = path.join(uploadDir, path.basename(seat.image_path || ""));
+
+    if (fs.existsSync(absoluteImagePath)) {
+      const imageBuffer = fs.readFileSync(absoluteImagePath); // 이미지 파일 읽기
+      imageBase64 = `data:image/png;base64,${imageBuffer.toString("base64")}`; // Base64 변환
+    }
+
+    // API 응답
+    res.status(200).json({
+      success: true,
+      seat: {
+        seatId: seat.seat_id,
+        seatName: seat.seat_name,
+        basicManners: seat.basic_manners,
+        warning: seat.warning,
+        image: imageBase64, // 이미지 데이터를 포함
+      },
+    });
+  } catch (err) {
+    console.error("좌석 정보 조회 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "좌석 정보를 조회하는 중 오류가 발생했습니다.",
+    });
+  }
+});
+// 특정 좌석 정보 조회 API 끝
 
 
 
