@@ -10,10 +10,12 @@ declare module "express-serve-static-core" {
 
 // 사용자 인증 미들웨어
 export const authenticateToken = (req: Request, res: Response, next: NextFunction): void => {
-  const accessToken = req.cookies?.accessToken;
+  // Authorization 헤더에서 Access Token 추출
+  const authHeader = req.headers.authorization; // Authorization 헤더 확인
+  const accessToken = authHeader && authHeader.split(" ")[1]; // "Bearer {token}"에서 token만 추출
 
   if (!accessToken) {
-    res.status(403).json({
+    res.status(401).json({
       success: false,
       message: "Access Token이 필요합니다.",
     });
@@ -25,7 +27,7 @@ export const authenticateToken = (req: Request, res: Response, next: NextFunctio
     req.user = decoded; // 사용자 정보를 요청 객체에 저장
     next(); // 다음 미들웨어로 이동
   } catch (err) {
-    res.status(403).json({
+    res.status(401).json({
       success: false,
       message: "유효하지 않은 Access Token입니다.",
     });
