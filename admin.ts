@@ -2,19 +2,17 @@
 
 import express, { Request, Express } from "express";
 import { authenticateToken, authorizeAdmin } from "./middleware/authenticate";
-import { db } from "./index.ts";
+import { db, initializeForceExitScheduler } from "./index.ts";
 import RateLimit from "express-rate-limit";
 import csurf from "csurf";
 import validator from "validator"; // 유효성 검사 라이브러리
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
 import he from "he";  // HTML 인코딩 라이브러리
 import bcrypt from "bcrypt";  // 비밀번호 해싱 라이브러리
-import crypto from "crypto"; // 파일 해시 계산을 위해 추가
 
 import multer from "multer"; // 파일 업로드 라이브러리
 import path from "path";  // 경로 라이브러리
 import fs from "fs";  // 파일 시스템 라이브러리
-
 
 
 const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
@@ -348,6 +346,13 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
     });
     return;
   }
+  if (/[`<>-]/.test(title) || /[`<>-]/.test(content)) {
+    res.status(400).json({
+      success: false,
+      message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
+    });
+    return;
+  }
 
   let connection: any;
   try {
@@ -420,6 +425,14 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
     });
     return;
   }
+  if (!allowedSymbols.test(title) || !allowedSymbols.test(content)) {
+    res.status(400).json({
+      success: false,
+      message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
+    });
+    return;
+  }
+
   let connection: any;
   try {
     connection = await db.getConnection();
@@ -925,138 +938,6 @@ router.get("/logs/book_restriction/all", csrfProtection, limiter, authenticateTo
 // 예약제한 로그 조회 API 끝
 
 
-// // 공지사항 수정 로그 조회 API 시작
-// router.get("/logs/edit", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
-//   db.getConnection()
-//     .then((connection) => {
-//       return connection.query(
-//         `
-//         SELECT 
-//           l.log_id,
-//           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-//           l.log_type,           -- 로그 유형 (book, notice)
-//           DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-//           u.name AS user_name,
-//           u.id AS user_info,
-//           s.name AS seat_name,
-//           l.reason AS restriction_reason,
-//           a.name AS admin_name
-//         FROM 
-//           logs l
-//         LEFT JOIN 
-//           book b ON l.book_id = b.book_id AND l.log_type = 'book'
-//         LEFT JOIN 
-//           notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice' AND n.admin_id = l.admin_id
-//         LEFT JOIN 
-//           user u ON b.user_id = u.user_id
-//         LEFT JOIN 
-//           seat s ON b.seat_id = s.seat_id
-//         LEFT JOIN 
-//           user a ON l.admin_id = a.user_id
-//         WHERE 
-//           l.type = 'edit' -- 공지사항 수정 로그만 조회
-//         ORDER BY 
-//           l.log_date DESC
-//         `
-//       ).finally(() => connection.release()); // 연결 해제 추가
-//     })
-//     .then((logs) => {
-//       // logs가 배열이 아닐 경우 변환
-//       if (!Array.isArray(logs)) {
-//         logs = Object.values(logs);
-//       }
-
-//       if (logs.length === 0) {
-//         res.status(404).json({
-//           success: false,
-//           message: "로그 데이터가 없습니다.",
-//         });
-//         return;
-//       }
-
-//       res.status(200).json({
-//         success: true,
-//         logs: logs,
-//       });
-//     })
-//     .catch((err) => {
-//       console.error("예약 로그 조회 중 오류 발생:", err);
-//       res.status(500).json({
-//         success: false,
-//         message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-//       });
-//     });
-// });
-// // 공지사항 수정 로그 조회 API 끝
-
-// // 공지사항 삭제 로그 조회 API 시작
-// router.get("/logs/delete", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
-//   db.getConnection()
-//     .then((connection) => {
-//       return connection.query(
-//         `
-//         SELECT 
-//           l.log_id,
-//           l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-//           l.log_type,           -- 로그 유형 (book, notice)
-//           DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-//           u.name AS user_name,
-//           u.id AS user_info,
-//           s.name AS seat_name,
-//           l.reason AS restriction_reason,
-//           a.name AS admin_name
-//         FROM 
-//           logs l
-//         LEFT JOIN 
-//           book b ON l.book_id = b.book_id AND l.log_type = 'book'
-//         LEFT JOIN 
-//           notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice' AND n.admin_id = l.admin_id
-//         LEFT JOIN 
-//           user u ON b.user_id = u.user_id
-//         LEFT JOIN 
-//           seat s ON b.seat_id = s.seat_id
-//         LEFT JOIN 
-//           user a ON l.admin_id = a.user_id
-//         WHERE 
-//           l.type = 'delete' -- 공지사항 삭제 로그만 조회
-//         ORDER BY 
-//           l.log_date DESC
-//         `
-//       ).finally(() => connection.release()); // 연결 해제 추가
-//     })
-//     .then((logs) => {
-//       // logs가 배열이 아닐 경우 변환
-//       if (!Array.isArray(logs)) {
-//         logs = Object.values(logs);
-//       }
-
-//       if (logs.length === 0) {
-//         res.status(404).json({
-//           success: false,
-//           message: "로그 데이터가 없습니다.",
-//         });
-//         return;
-//       }
-
-//       res.status(200).json({
-//         success: true,
-//         logs: logs,
-//       });
-//     })
-//     .catch((err) => {
-//       console.error("예약 로그 조회 중 오류 발생:", err);
-//       res.status(500).json({
-//         success: false,
-//         message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-//       });
-//     });
-// });
-// // 공지사항 삭제 로그 조회 API 끝
-
-
-
-
-
 // 사용자 목록 조회 API 시작
 router.get("/users", csrfProtection, limiter, authenticateToken, authorizeAdmin, (req, res) => {
   db.getConnection()
@@ -1150,7 +1031,7 @@ router.patch("/users/:user_id", csrfProtection, limiter, authenticateToken, auth
   )) {
     res.status(400).json({
       success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
     });
     return;
   }
@@ -1778,6 +1659,9 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
       res.status(404).json({ success: false, message: "업데이트할 설정 정보를 찾을 수 없습니다." });
     }
 
+    // 스케줄러 재등록
+    await initializeForceExitScheduler();
+
     res.status(200).json({ 
       success: true, 
       message: "설정 정보가 성공적으로 업데이트되었습니다." 
@@ -1792,7 +1676,7 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
 
 
 
-// 좌석 정보 수정 API 시작
+// 좌석 정보 수정 API 시작 - 좌석 관리
 router.patch("/update-seat", csrfProtection, limiter, authenticateToken, authorizeAdmin, upload.single("image"), async (req: Request & { existingImagePath?: string, file?: multer.File }, res) => {
   let  { selectedSeats, warning, pcUsage } = req.body;
   try {
@@ -1806,8 +1690,15 @@ router.patch("/update-seat", csrfProtection, limiter, authenticateToken, authori
       return;
     }
 
+    if (!validator.isLength(warning, { max: 100 }) || /[`<>-]/.test(warning)) {
+      res.status(400).json({
+        success: false,
+        message: "주의사항은 최대 100자의 텍스트이며, <, >, `, - 문자는 허용되지 않습니다.",
+      });
+      return;
+    }
+
     // 이미지 경로 설정
-    
     const imagePath = req.existingImagePath || `/image/${req.file.filename}`;
 
     let connection;
