@@ -7,7 +7,7 @@ import jwt from "jsonwebtoken"; // JWT 토큰 생성 및 검증
 
 import cookieParser from "cookie-parser"; // 쿠키 파싱 미들웨어 추가
 import adminRoutes from "./admin"; // 관리자 전용 API
-import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; // 인증 미들웨어
+import { authenticateToken } from "./middleware/authenticate"; // 인증 미들웨어
 
 import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
 import csurf from "csurf";
@@ -66,7 +66,7 @@ const FRONT_PORT = 4000; // 프론트 서버 포트 번호
 const app = express();
 app.use(cors({ origin: `http://localhost:${FRONT_PORT}`, credentials: true })); // CORS 설정, credentials는 프론트와 백엔드의 쿠키 공유를 위해 필요
 app.use(express.json()); // JSON 요청을 처리하기 위한 미들웨어
-app.use(cookieParser()); // 쿠키 파싱 미들웨어 등록
+app.use(cookieParser(process.env.SESSION_SECRET)); // 쿠키 파싱 미들웨어 등록
 
 // CSRF 미들웨어 초기화
 // 원하는 경로에만 csrfProtection를 추가
@@ -194,7 +194,9 @@ app.listen(PORT, "0.0.0.0", () => {
 // CSRF 토큰 요청 API 시작 *중요
 app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
   try {
-    res.json({ csrfToken: req.csrfToken?.() }); // csrfToken 메서드 사용
+    res.json({ 
+      csrfToken: req.csrfToken?.() 
+    }); // csrfToken 메서드 사용
   } catch (err) {
     console.error("CSRF 토큰 생성 중 오류 발생:", err);
     res.status(500).json({
@@ -255,15 +257,14 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
 
         // Step 3: Access Token 발급
         const accessToken = jwt.sign(
-          { userId: user.user_id, name: user.name, permission: user.permission },
+          { userId: user.user_id, name: user.name, permission: user.permission, id: user.id },
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
-        // 이거 수정 필요할듯? 엑세스 토큰에 해당 정보들 다 필요없을듯,
 
         // Step 4: Refresh Token 발급
         const refreshToken = jwt.sign(
-          { userId: user.user_id, name: user.name, permission: user.permission},
+          { userId: user.user_id, name: user.name, permission: user.permission, id: user.id},
           process.env.JWT_REFRESH_SECRET!,
           { expiresIn: "7d" } // Refresh Token 만료 시간
         );
@@ -352,7 +353,7 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
   ) {
     res.status(400).json({
       success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
     });
     return;
   }
@@ -503,7 +504,7 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
       try {
         const decoded: any = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!);
         const newAccessToken = jwt.sign(
-          { userId: decoded.userId, name: decoded.name, permission: decoded.permission },
+          { userId: decoded.userId, name: decoded.name, permission: decoded.permission, id: decoded.id },
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
@@ -1084,7 +1085,7 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
   ) {
     res.status(400).json({
       success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
     });
     return;
   }
@@ -1271,7 +1272,7 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
   ) {
     res.status(400).json({
       success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
     });
     return;
   }
@@ -1286,7 +1287,7 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
   ) {
     res.status(400).json({
       success: false,
-      message: "비밀번호는 8자리 이상, 영문, 숫자, 그리고 ! @ # $ % ^ & * ? 특수문자만 포함해야 합니다.",
+      message: "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
     });
     return;
   }
