@@ -488,50 +488,112 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
   const { userId, seat_id } = req.body;
 
   if (!Number.isInteger(seat_id) || seat_id <= 0) {
-    res.status(400).json({ success: false, message: "유효하지 않은 좌석 ID입니다." });
+    res.status(400).json({ 
+      success: false, 
+      message: "유효하지 않은 좌석 ID입니다." 
+    });
     return;
   }
-
 
   let connection;
   try {
     connection = await db.getConnection(); // 데이터베이스 연결
     await connection.beginTransaction(); // 트랜잭션 시작
 
-    // Step 1: 사용자가 이미 예약한 상태인지 확인
+    // Step 1: 기본 설정에서 사용 가능 시간 확인
+    const [defaultSettings] = await connection.query(
+      `
+      SELECT available_start_time, available_end_time
+      FROM default_settings 
+      WHERE setting_id = 1
+      `
+    );
+
+    const currentTime = new Date().toLocaleTimeString("en-US", { hour12: false });
+    if (currentTime < defaultSettings.available_start_time || currentTime > defaultSettings.available_end_time) {
+      throw { 
+        status: 400, 
+        message: "현재 시간에 예약이 불가능합니다.\n예약 가능 시간은 " + defaultSettings.available_start_time + "부터 " + defaultSettings.available_end_time + "까지입니다."
+      };
+    }
+
+     // Step 2: 예약 제한 시간 확인
+     // 좌석 이름 조회
+     const seatNameQuery = await connection.query(
+      `
+      SELECT name 
+      FROM seat 
+      WHERE seat_id = ?
+      `,
+      [seat_id]
+    );
+
+    // seat_id로 가져온 좌석 이름
+    const seatName = seatNameQuery[0].name;
+
+    const restrictions = await connection.query(
+      `
+      SELECT * 
+      FROM book_restriction 
+      WHERE FIND_IN_SET(?, seat_names) AND restriction_start_date <= NOW() AND restriction_end_date >= NOW()
+      `,
+      [seatName]
+    );
+    
+    if (restrictions.length > 0) {
+      throw { 
+        status: 400, 
+        message: "해당 좌석은 현재 예약이 제한되었습니다.\n공지사항을 확인해주세요." 
+      };
+    }
+
+    // Step 3: 사용자가 이미 예약한 상태인지 확인
     const existingReservation = await connection.query(
-      "SELECT * FROM book WHERE user_id = ? AND state = 'book'",
+      `
+      SELECT * 
+      FROM book 
+      WHERE user_id = ? AND state = 'book'
+      `,
       [userId]
     );
     
     if (existingReservation.length > 0) {
-      throw { status: 400, message: "예약한 좌석이 존재합니다. 퇴실 후 다시 예약해주세요." };
+      throw { 
+        status: 400, 
+        message: "예약한 좌석이 존재합니다. 퇴실 후 다시 예약해주세요." 
+      };
     }
 
-    // Step 2: 좌석 존재 확인
+    // Step 4: 좌석 존재 확인
     const seat = await connection.query("SELECT * FROM seat WHERE seat_id = ?", [seat_id]);
 
     if (seat.length === 0) {
-      throw { status: 400, message: "존재하지 않는 좌석입니다." };
+      throw { 
+        status: 400, 
+        message: "존재하지 않는 좌석입니다." 
+      };
     }
 
-    // Step 3: 좌석 예약 상태 확인
+    // Step 5: 좌석 예약 상태 확인
     const existingBooking = await connection.query(
       "SELECT * FROM book WHERE seat_id = ? AND state = 'book'",
       [seat_id]
     );
 
     if (existingBooking.length > 0) {
-      throw { status: 400, message: "이미 예약된 좌석입니다." };
+      throw { 
+        status: 400, 
+        message: "이미 예약된 좌석입니다." 
+      };
     }
 
-    // Step 4: 예약 생성
+    // Step 6: 예약 생성
     const result = await connection.query(
       "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, NOW(), 'book')",
       [userId, seat_id ]
     );
 
-    // 예약 로그 기록
+    // Step 7: 예약 로그 기록
     await connection.query(
       `
       INSERT INTO logs (book_id, log_date, type, log_type) VALUES (?, NOW(), 'book', 'book')
@@ -539,7 +601,7 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
       [result.insertId]
     );
 
-    // Step 5: 트랜잭션 커밋
+    // Step 8: 트랜잭션 커밋
     await connection.commit();
 
     res.status(201).json({
@@ -547,8 +609,10 @@ app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req
       reservation_id: result.insertId,
       message: "예약이 성공적으로 완료되었습니다.",
     });
+
   } catch (err) {
     if (connection) await connection.rollback(); // 에러 발생 시 트랜잭션 롤백
+
     res.status(err.status || 500).json({
       success: false,
       message: err.message || "예약 처리 중 서버 오류가 발생했습니다.",
