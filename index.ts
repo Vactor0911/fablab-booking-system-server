@@ -3,9 +3,7 @@ import MariaDB from "mariadb";
 import cors from "cors";
 import dotenv from "dotenv"; // 환경 변수 사용한 민감한 정보 관리
 import bcrypt from "bcrypt"; // 비밀번호 암호화 최신버전
-import jwt from "jsonwebtoken";
-
-import moment from "moment-timezone"; // 시간대 변환 라이브러리
+import jwt from "jsonwebtoken"; // JWT 토큰 생성 및 검증
 
 import cookieParser from "cookie-parser"; // 쿠키 파싱 미들웨어 추가
 import adminRoutes from "./admin"; // 관리자 전용 API
@@ -13,6 +11,7 @@ import { authenticateToken, authorizeAdmin } from "./middleware/authenticate"; /
 
 import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
 import csurf from "csurf";
+
 import validator from "validator"; // 유효성 검사 라이브러리
 const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
 
@@ -20,6 +19,10 @@ import path from "path";  // 경로 라이브러리
 import fs from "fs";  // 파일 시스템 라이브러리
 
 const uploadDir = path.join(__dirname, "../fablab-booking-system-server/image"); // 이미지 업로드 경로, __dirname은 현재 파일의 경로 예) E:
+
+import cron from "node-cron"; // 서버 스케줄러
+import axios from "axios";  // 서버 내의 API 호출을 위한 라이브러리
+
 
 // Request 타입 확장
 declare module "express" {
@@ -35,12 +38,23 @@ const limiter = rateLimit({
 });
 
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
-import { a } from "vite-node/dist/index-z0R8hVRu.js";
 
 // .env 파일 로드
 dotenv.config();
 // 환경변수가 하나라도 없으면 서버 실행 불가
-["DB_HOST", "DB_PORT", "DB_USERNAME", "DB_PASSWORD", "DB_DATABASE", "JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET"].forEach((key) => {
+[
+  "DB_HOST", 
+  "DB_PORT", 
+  "DB_USERNAME", 
+  "DB_PASSWORD", 
+  "DB_DATABASE", 
+  "JWT_ACCESS_SECRET", 
+  "JWT_REFRESH_SECRET", 
+  "NODEMAILER_USER",
+  "NODEMAILER_PASS",
+  "SESSION_SECRET",
+  "SERVER_HOST"
+].forEach((key) => {
   if (!process.env[key]) {
     throw new Error(`해당 환경변수가 존재하지 않습니다.: ${key}`);
   }
@@ -64,14 +78,6 @@ const csrfProtection = csurf({
     sameSite: "strict", // CSRF 보호를 위한 설정
   },
 });
-
-// // 추가로 모든 POST, PATCH, PUT, DELETE에 적용하고 싶으면 미들웨어를 전역으로 추가 가능
-// app.use((req: Request, res: Response, next: NextFunction) => {
-//   if (["POST", "PATCH", "PUT", "DELETE"].includes(req.method)) {
-//     return csrfProtection(req, res, next);
-//   }
-//   next();
-// });
 
 
 // MariaDB 연결
@@ -131,6 +137,51 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   return this.toString();
 };
 
+// ----------------- 스케줄러 등록 -----------------
+
+// 스케줄러 변수
+let currentScheduler: cron.ScheduledTask | null = null;
+
+// 스케줄러 초기화 및 재등록 함수
+export const initializeForceExitScheduler = async () => {
+  try {
+    // 기본 설정에서 종료 시간 조회
+    const [defaultSettings] = await db.query(
+      `SELECT available_end_time FROM default_settings WHERE setting_id = 1`
+    );
+
+    const availableEndTime = defaultSettings?.available_end_time || "23:59:59";
+    const [hour, minute] = availableEndTime.split(":");
+
+    // 기존 스케줄러 중지
+    if (currentScheduler) {
+      currentScheduler.stop();
+      console.log("기존 스케줄러가 중지되었습니다.");
+    }
+
+    // 새로운 스케줄러 등록
+    const cronExpression = `${minute} ${hour} * * *`; // 종료 시간에 맞게 크론 표현식 생성
+    currentScheduler = cron.schedule(cronExpression, async () => {
+      try {
+        console.log(`[${new Date().toLocaleTimeString("en-US", { hour12: false })}] 강제 퇴실 스케줄러 실행`);
+
+        // 강제 퇴실 API 호출
+        const response = await axios.post(`${process.env.SERVER_HOST}/force-exit/schedule/endtime`);
+        console.log("강제 퇴실 처리 완료:", response.data.message);
+      } catch (error) {
+        console.error("강제 퇴실 API 호출 중 오류 발생:", error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error("강제 퇴실 스케줄러 초기화 중 오류 발생:", error.message);
+  }
+};
+
+// 서버 시작 시 스케줄러 초기화
+initializeForceExitScheduler();
+
+// ----------------- 스케줄러 등록 -----------------
 
 // 서버 시작
 app.listen(PORT, "0.0.0.0", () => {
@@ -1468,4 +1519,140 @@ app.patch("/notice/:id/increment-views", csrfProtection, limiter, async (req: Re
 
 
 
+// 사용 가능 종료 시간 시 퇴실 API 시작
+app.post("/force-exit/schedule/endtime", async (req, res) => {
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
 
+    // Step 1: 기본 설정에서 사용 가능 종료 시간 확인
+    const [defaultSettings] = await connection.query(
+      `SELECT available_end_time FROM default_settings WHERE setting_id = 1`
+    );
+
+    const availableEndTime = defaultSettings?.available_end_time || "23:59:59";
+    const currentTime = new Date().toLocaleTimeString("en-US", { hour12: false });
+
+    // 현재 시간이 종료 시간을 넘어섰는지 확인
+    if (currentTime < availableEndTime) {
+      res.status(200).json({
+        success: true,
+        message: "현재 시간이 종료 시간을 초과하지 않았으므로 강제 퇴실 대상이 없습니다.",
+      });
+      return;
+    }
+
+    // Step 2: 강제 퇴실 대상 조회 (모든 'book' 상태의 예약)
+    const affectedReservations = await connection.query(
+      `
+      SELECT 
+        b.book_id, 
+        b.seat_id, 
+        b.user_id, 
+        u.email, 
+        u.name AS user_name, 
+        (SELECT name FROM seat WHERE seat_id = b.seat_id) AS seat_name
+      FROM 
+        book b 
+      JOIN 
+        user u ON b.user_id = u.user_id
+      WHERE 
+        b.state = 'book'
+      `
+    );
+
+    if (affectedReservations.length === 0) {
+      res.status(200).json({
+        success: true,
+        message: "강제 퇴실 대상이 없습니다.",
+      });
+      return;
+    }
+
+    // Step 3: 강제 퇴실 처리 (트랜잭션 내에서 상태 업데이트 및 로그 기록)
+    for (const reservation of affectedReservations) {
+      await connection.query(
+        `UPDATE book SET state = 'cancel' WHERE book_id = ?`,
+        [reservation.book_id]
+      );
+
+      await connection.query(
+        `
+        INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+        VALUES (?, NOW(), 'cancel', 'book', '사용 가능 종료 시간 초과')
+        `,
+        [reservation.book_id]
+      );
+    }
+
+    // 트랜잭션 커밋
+    await connection.commit();
+
+    // Step 4: 이메일 알림 비동기로 처리 (트랜잭션 외부)
+    const emailPromises = affectedReservations.map(async (reservation) => {
+      const seatName = reservation.seat_name || "알 수 없음";
+      const userName = reservation.user_name || "사용자";
+
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.NODEMAILER_USER,
+          pass: process.env.NODEMAILER_PASS,
+        },
+      });
+
+      const mailOptions = {
+        from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+        to: reservation.email,
+        subject: `[FabLab 예약 시스템] ${seatName} 강제 퇴실 알림`,
+        html: `
+          <h1>강제 퇴실 알림</h1>
+          <p>${userName}님,</p>
+          <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
+          <ul>
+            <li><strong>좌석 번호:</strong> ${seatName}</li>
+            <li><strong>퇴실 사유:</strong> 사용 가능 종료 시간(${availableEndTime})을 초과하였습니다.</li>
+          </ul>
+          <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
+          <p>감사합니다.<br>FabLab 예약 시스템</p>
+        `,
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log(`이메일 전송 성공 (예약 ID: ${reservation.book_id})`);
+      } catch (emailError) {
+        console.error(
+          `이메일 전송 중 오류 발생 (예약 ID: ${reservation.book_id}):`,
+          emailError
+        );
+      }
+    });
+
+    // 모든 이메일 전송 작업을 비동기로 처리
+    await Promise.allSettled(emailPromises);
+
+
+    // 성공 응답 반환
+    res.status(200).json({
+      success: true,
+      message: `${affectedReservations.length}건의 강제 퇴실 처리가 완료되었습니다.`,
+    });
+  } catch (err) {
+    if (connection) await connection.rollback();
+
+    console.error("강제 퇴실 처리 중 오류 발생:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "강제 퇴실 처리 중 오류가 발생했습니다.",
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+// 사용 가능 종료 시간 시 퇴실 API 끝

@@ -2,19 +2,17 @@
 
 import express, { Request, Express } from "express";
 import { authenticateToken, authorizeAdmin } from "./middleware/authenticate";
-import { db } from "./index.ts";
+import { db, initializeForceExitScheduler } from "./index.ts";
 import RateLimit from "express-rate-limit";
 import csurf from "csurf";
 import validator from "validator"; // 유효성 검사 라이브러리
 import nodemailer from "nodemailer";  // 이메일 전송 라이브러리
 import he from "he";  // HTML 인코딩 라이브러리
 import bcrypt from "bcrypt";  // 비밀번호 해싱 라이브러리
-import crypto from "crypto"; // 파일 해시 계산을 위해 추가
 
 import multer from "multer"; // 파일 업로드 라이브러리
 import path from "path";  // 경로 라이브러리
 import fs from "fs";  // 파일 시스템 라이브러리
-
 
 
 const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
@@ -1777,6 +1775,9 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
     if (result.affectedRows === 0) {
       res.status(404).json({ success: false, message: "업데이트할 설정 정보를 찾을 수 없습니다." });
     }
+
+    // 스케줄러 재등록
+    await initializeForceExitScheduler();
 
     res.status(200).json({ 
       success: true, 
