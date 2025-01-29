@@ -13,7 +13,8 @@ import rateLimit from "express-rate-limit"; // 요청 제한 미들웨어
 import csurf from "csurf";
 
 import validator from "validator"; // 유효성 검사 라이브러리
-const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
+const allowedSymbolsForPassword = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
+const allowedSymbols = /[`'"<>-]/; // 금지된 문자
 
 import path from "path";  // 경로 라이브러리
 import fs from "fs";  // 파일 시스템 라이브러리
@@ -257,14 +258,14 @@ app.post("/users/login", csrfProtection, (req: Request, res: Response) => {
 
         // Step 3: Access Token 발급
         const accessToken = jwt.sign(
-          { userId: user.user_id, name: user.name, permission: user.permission, id: user.id },
+          { userId: user.user_id, name: user.name, permission: user.permission},
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
 
         // Step 4: Refresh Token 발급
         const refreshToken = jwt.sign(
-          { userId: user.user_id, name: user.name, permission: user.permission, id: user.id},
+          { userId: user.user_id, name: user.name, permission: user.permission},
           process.env.JWT_REFRESH_SECRET!,
           { expiresIn: "7d" } // Refresh Token 만료 시간
         );
@@ -349,7 +350,7 @@ app.post("/users/register", csrfProtection, limiter, (req: Request, res: Respons
       minSymbols: 1,
       minUppercase: 0,
     }) || 
-    !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+    !allowedSymbolsForPassword.test(password) // 허용된 문자만 포함하지 않은 경우
   ) {
     res.status(400).json({
       success: false,
@@ -504,7 +505,7 @@ app.post("/users/token/refresh", csrfProtection, (req: Request, res: Response) =
       try {
         const decoded: any = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!);
         const newAccessToken = jwt.sign(
-          { userId: decoded.userId, name: decoded.name, permission: decoded.permission, id: decoded.id },
+          { userId: decoded.userId, name: decoded.name, permission: decoded.permission},
           process.env.JWT_ACCESS_SECRET!,
           { expiresIn: "15m" } // Access Token 만료 시간
         );
@@ -735,7 +736,7 @@ app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (r
 
 
 
-// 좌석 데이터 제공 API 시작
+// 예약 좌석 데이터 제공 API 시작
 app.get("/seats", limiter, authenticateToken, async (req, res) => {
   try {
     const rows = await db.query(`
@@ -1081,7 +1082,7 @@ app.post("/users/verify-code", csrfProtection, async (req: Request, res: Respons
       minSymbols: 1,
       minUppercase: 0,
     }) || 
-    !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+    !allowedSymbolsForPassword.test(password) // 허용된 문자만 포함하지 않은 경우
   ) {
     res.status(400).json({
       success: false,
@@ -1268,7 +1269,7 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
       minSymbols: 1,
       minUppercase: 0,
     }) || 
-    !allowedSymbols.test(password) // 허용된 문자만 포함하지 않은 경우
+    !allowedSymbolsForPassword.test(password) // 허용된 문자만 포함하지 않은 경우
   ) {
     res.status(400).json({
       success: false,
@@ -1283,7 +1284,7 @@ app.patch("/users/modify", csrfProtection, limiter, authenticateToken, (req: Req
       minSymbols: 1,
       minUppercase: 0,
     }) || 
-    !allowedSymbols.test(newpassword) // 허용된 문자만 포함하지 않은 경우
+    !allowedSymbolsForPassword.test(newpassword) // 허용된 문자만 포함하지 않은 경우
   ) {
     res.status(400).json({
       success: false,
@@ -1421,6 +1422,7 @@ app.get("/users/reservations", csrfProtection, limiter, authenticateToken, (req:
 app.get("/notice", limiter, (req: Request, res: Response) => {
   const query = `
     SELECT 
+      notice_uuid,
       notice_id, 
       title, 
       DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
@@ -1433,6 +1435,7 @@ app.get("/notice", limiter, (req: Request, res: Response) => {
       res.status(200).json({
         success: true,
         notices: rows.map((row) => ({
+          notice_uuid: row.notice_uuid,
           notice_id: row.notice_id,
           title: row.title,
           date: row.formatted_date,
@@ -1452,8 +1455,8 @@ app.get("/notice", limiter, (req: Request, res: Response) => {
 
 
 // 공지사항 내용 조회 API 시작
-app.get("/notice/:id", async (req: Request, res: Response) => {
-  const { id } = req.params;
+app.get("/notice/:uuid", async (req: Request, res: Response) => {
+  const { uuid } = req.params;
 
   try {
     const query = `
@@ -1466,17 +1469,19 @@ app.get("/notice/:id", async (req: Request, res: Response) => {
         n.views
       FROM notice n
       LEFT JOIN user u ON n.admin_id = u.user_id
-      WHERE n.notice_id = ?
+      WHERE n.notice_uuid = ?
     `;
 
-    const [notice] = await db.query(query, [id]);
+    const [notice] = await db.query(query, [uuid]);
 
     if (!notice) {
       res.status(404).json({ message: "공지사항을 찾을 수 없습니다." });
       return;
     }
 
-    res.json({ notice });
+    res.json({ 
+      notice 
+    });
   } catch (err) {
     console.error("공지사항 조회 중 오류 발생:", err);
     res.status(500).json({ message: "공지사항 데이터를 가져오는 중 오류가 발생했습니다." });
@@ -1486,8 +1491,8 @@ app.get("/notice/:id", async (req: Request, res: Response) => {
 
 
 // 공지사항 조회수 증가 API 시작
-app.patch("/notice/:id/increment-views", csrfProtection, limiter, async (req: Request, res: Response) => {
-  const { id } = req.params;
+app.patch("/notice/:uuid/increment-views", csrfProtection, limiter, async (req: Request, res: Response) => {
+  const { uuid } = req.params;
 
   try {
     // 조회수 증가 트랜잭션 시작
@@ -1496,8 +1501,8 @@ app.patch("/notice/:id/increment-views", csrfProtection, limiter, async (req: Re
 
     // 조회수 증가
     const result = await connection.query(
-      "UPDATE notice SET views = views + 1 WHERE notice_id = ?",
-      [id]
+      "UPDATE notice SET views = views + 1 WHERE notice_uuid = ?",
+      [uuid]
     );
 
     if (result.affectedRows === 0) {

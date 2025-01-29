@@ -15,7 +15,8 @@ import path from "path";  // 경로 라이브러리
 import fs from "fs";  // 파일 시스템 라이브러리
 
 
-const allowedSymbols = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자만 포함하는지 확인
+const allowedSymbolsForPassword = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자들
+const allowedSymbols = /[`'<>-]/; // 금지된 문자
 
 // Rate Limit 설정
 const limiter = RateLimit({
@@ -203,10 +204,10 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
       return;
     }
     // 특수문자 검증 (허용되지 않는 특수문자 체크)
-    if (!validator.isLength(reason, { max: 100 }) || /[`<>-]/.test(reason)) {
+    if (!validator.isLength(reason, { max: 100 }) || allowedSymbols.test(reason)) {
       res.status(400).json({
         success: false,
-        message: "퇴실 사유는 최대 100자의 텍스트이며, <, >, `, - 문자는 허용되지 않습니다.",
+        message: "퇴실 사유는 최대 100자의 텍스트이며, <, >, `, -, '  문자는 허용되지 않습니다."
       });
       return;
     }
@@ -310,18 +311,8 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
 
 
 // 공지사항 수정 API 시작
-router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => { 
-  const { id } = req.params;
-  const { title, content, userId } = req.body;
-  const noticeId = parseInt(id, 10);
-
-  if (isNaN(noticeId)) {
-    res.status(400).json({
-      success: false,
-      message: "유효하지 않은 공지사항 ID입니다.",
-    });
-    return;
-  }
+router.patch("/notice/:uuid", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => { 
+  const { noticeId, title, content, userId } = req.body;
 
   if (!title || !content) {
     res.status(400).json({
@@ -346,7 +337,7 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
     });
     return;
   }
-  if (/[`<>-]/.test(title) || /[`<>-]/.test(content)) {
+  if (allowedSymbols.test(title) || allowedSymbols.test(content)) {
     res.status(400).json({
       success: false,
       message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
@@ -398,7 +389,7 @@ router.patch("/notice/:id", csrfProtection, limiter, authenticateToken, authoriz
 // 공지사항 수정 API 끝
 
 
-// 공지사항 생성, 작성 API 시작
+// 공지사항 생성, 공지사항 작성 API 시작
 router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
   const { title, content, userId } = req.body;
 
@@ -425,7 +416,7 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
     });
     return;
   }
-  if (!allowedSymbols.test(title) || !allowedSymbols.test(content)) {
+  if (allowedSymbols.test(title) || allowedSymbols.test(content)) {
     res.status(400).json({
       success: false,
       message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
@@ -481,17 +472,7 @@ router.post("/notice", csrfProtection, limiter, authenticateToken, authorizeAdmi
 
 // 공지사항 삭제 API 시작
 router.delete("/notice/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-  const { id } = req.params;
-  const noticeId = parseInt(id, 10);
-  const { userId } = req.body;
-
-  if (isNaN(noticeId)) {
-    res.status(400).json({
-      success: false,
-      message: "유효하지 않은 공지사항 ID입니다.",
-    });
-    return;
-  }
+  const { userId, noticeId } = req.body;
 
   let connection: any;
 
@@ -836,8 +817,9 @@ router.get("/logs/notice/all", csrfProtection, limiter, authenticateToken, autho
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
           user a ON l.admin_id = a.user_id
-        WHERE 
-          l.type = 'create' OR l.type = 'edit' OR l.type = 'delete' -- 공지사항 관련 로그만 조회
+        WHERE
+          (l.type = 'create' OR l.type = 'edit' OR l.type = 'delete') 
+          AND l.log_type = 'notice' -- 공지사항 관련 로그만 조회
         ORDER BY 
           l.log_date DESC
         `
@@ -902,7 +884,8 @@ router.get("/logs/book_restriction/all", csrfProtection, limiter, authenticateTo
         LEFT JOIN 
           user a ON l.admin_id = a.user_id
         WHERE 
-          l.type = 'create' OR l.type = 'edit' OR l.type = 'delete' -- 예약제한 관련 로그만 조회
+          (l.type = 'create' OR l.type = 'edit' OR l.type = 'delete') 
+          AND l.log_type = 'restriction' -- 예약제한 관련 로그만 조회
         ORDER BY 
           l.log_date DESC
         `
@@ -1027,7 +1010,7 @@ router.patch("/users/:user_id", csrfProtection, limiter, authenticateToken, auth
       minSymbols: 1,
       minUppercase: 0,
     }) ||
-    !allowedSymbols.test(newPassword)
+    !allowedSymbolsForPassword.test(newPassword)
   )) {
     res.status(400).json({
       success: false,
@@ -1144,7 +1127,7 @@ router.get("/book/restriction", csrfProtection, limiter, authenticateToken, auth
   try {
     const query = `
       SELECT 
-          br.restriction_id,
+          br.restriction_uuid,
           br.notice_id,
           n.title AS notice_title,
           a.name AS admin_name,
@@ -1166,7 +1149,7 @@ router.get("/book/restriction", csrfProtection, limiter, authenticateToken, auth
 
     // 응답 데이터 포맷
     const formattedResults = results.map(row => ({
-      restriction_id: row.restriction_id,
+      restriction_uuid: row.restriction_uuid,
       notice_id: row.notice_id,
       notice_title: row.notice_title,
       admin_name: row.admin_name,
@@ -1191,8 +1174,8 @@ router.get("/book/restriction", csrfProtection, limiter, authenticateToken, auth
 
 
 // 특정 예약 제한 정보 조회 API 시작
-router.get("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-  const { id } = req.params; // 예약 제한 ID 가져오기
+router.get("/book/restriction/:uuid", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { uuid } = req.params; // 예약 제한 ID 가져오기
 
   let connection;
   try {
@@ -1203,6 +1186,7 @@ router.get("/book/restriction/:id", csrfProtection, limiter, authenticateToken, 
       `
       SELECT 
         br.restriction_id,
+        br.restriction_uuid,
         br.notice_id,
         n.title AS notice_title,
         DATE_FORMAT(br.restriction_start_date, '%Y-%m-%d %H:%i') AS startDate,
@@ -1210,9 +1194,9 @@ router.get("/book/restriction/:id", csrfProtection, limiter, authenticateToken, 
         br.seat_names
       FROM book_restriction br
       LEFT JOIN notice n ON br.notice_id = n.notice_id
-      WHERE br.restriction_id = ?
+      WHERE br.restriction_uuid = ?
       `,
-      [id]
+      [uuid]
     );
 
     if (rows.length === 0) {
@@ -1233,6 +1217,7 @@ router.get("/book/restriction/:id", csrfProtection, limiter, authenticateToken, 
       success: true,
       restrictions: {
         restriction_id: restrictionInfo.restriction_id,
+        restriction_uuid: restrictionInfo.restriction_uuid,
         notice_id: restrictionInfo.notice_id,
         notice_title: restrictionInfo.notice_title,
         restriction_start_date: restrictionInfo.startDate,
@@ -1355,7 +1340,7 @@ router.post("/book/restriction", csrfProtection, limiter, authenticateToken, aut
       INSERT INTO book_restriction (seat_names, restriction_start_date, restriction_end_date, notice_id, admin_id) 
       VALUES (?, ?, ?, ?, ?)
       `,
-      [seatNames, startDate, endDate, selectedNotice, userId]
+      [ seatNames, startDate, endDate, selectedNotice, userId ]
     );
 
     const restrictionId = restrictionResult.insertId;
@@ -1392,11 +1377,11 @@ router.post("/book/restriction", csrfProtection, limiter, authenticateToken, aut
 
 
 // 특정 예약 제한 수정 API 시작
-router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-  const { id } = req.params; // 예약 제한 ID
-  const { selectedSeats, seatNames, startDate, endDate, selectedNotice, userId } = req.body;
+router.patch("/book/restriction/:uuid", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { uuid } = req.params; // 예약 제한 ID
+  const { restrictionId, selectedSeats, seatNames, startDate, endDate, selectedNotice, userId } = req.body;
 
-  if (!selectedSeats || !startDate || !endDate || !seatNames) {
+  if (!selectedSeats || !startDate || !endDate || !seatNames || !restrictionId) {
     res.status(400).json({
       success: false,
       message: "필수 입력값이 누락되었습니다.",
@@ -1492,9 +1477,9 @@ router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken
       `
       UPDATE book_restriction
       SET seat_names = ?, restriction_start_date = ?, restriction_end_date = ?, notice_id = ?
-      WHERE restriction_id = ?
+      WHERE restriction_uuid = ?
       `,
-      [seatNames, startDate, endDate, selectedNotice, id]
+      [seatNames, startDate, endDate, selectedNotice, uuid]
     );
 
 
@@ -1504,7 +1489,7 @@ router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken
       INSERT INTO logs (log_date, type, log_type, admin_id, restriction_id, notice_id)
       VALUES (NOW(), 'edit', 'restriction', ?, ?, ?)
       `,
-      [userId, id, selectedNotice]
+      [userId, restrictionId, selectedNotice]
     );
 
     // 트랜잭션 커밋
@@ -1531,9 +1516,9 @@ router.patch("/book/restriction/:id", csrfProtection, limiter, authenticateToken
 
 
 // 특정 예약 제한 삭제 API 시작
-router.delete("/book/restriction/:id", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-  const { id } = req.params;
-  const { userId } = req.body;
+router.delete("/book/restriction/:uuid", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { uuid } = req.params;
+  const { restrictionId, userId } = req.body;
 
   let connection;
   try {
@@ -1544,8 +1529,8 @@ router.delete("/book/restriction/:id", csrfProtection, limiter, authenticateToke
 
     // 예약 제한 데이터 확인
     const restriction = await connection.query(
-      `SELECT restriction_id, seat_names FROM book_restriction WHERE restriction_id = ?`,
-      [id]
+      `SELECT restriction_id, seat_names FROM book_restriction WHERE restriction_uuid = ?`,
+      [uuid]
     );
 
     if (!restriction || restriction.length === 0) {
@@ -1563,13 +1548,13 @@ router.delete("/book/restriction/:id", csrfProtection, limiter, authenticateToke
       INSERT INTO logs (log_date, type, log_type, admin_id, restriction_id) 
       VALUES (NOW(), 'delete', 'restriction', ?, ? )
       `,
-      [userId, id]
+      [userId, restrictionId]
     );
 
     // 삭제 처리
     await connection.query(
-      `DELETE FROM book_restriction WHERE restriction_id = ?`,
-      [id]
+      `DELETE FROM book_restriction WHERE restriction_uuid = ?`,
+      [uuid]
     );
 
     // 트랜잭션 커밋
@@ -1634,7 +1619,7 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
   }
 
   // 특수문자 검증 (허용되지 않는 특수문자 체크)
-  if (!validator.isLength(basic_manners, { max: 200 }) || /[`<>-]/.test(basic_manners)) {
+  if (!validator.isLength(basic_manners, { max: 200 }) || /[`"<>-]/.test(basic_manners)) {
     res.status(400).json({
       success: false,
       message: "퇴실 사유는 최대 200자의 텍스트이며, <, >, `, - 문자는 허용되지 않습니다.",
@@ -1690,10 +1675,10 @@ router.patch("/update-seat", csrfProtection, limiter, authenticateToken, authori
       return;
     }
 
-    if (!validator.isLength(warning, { max: 100 }) || /[`<>-]/.test(warning)) {
+    if (!validator.isLength(warning, { max: 100 }) || allowedSymbols.test(warning)) {
       res.status(400).json({
         success: false,
-        message: "주의사항은 최대 100자의 텍스트이며, <, >, `, - 문자는 허용되지 않습니다.",
+        message: "주의사항은 최대 100자의 텍스트이며, <, >, `, -, ' 문자는 허용되지 않습니다.",
       });
       return;
     }
