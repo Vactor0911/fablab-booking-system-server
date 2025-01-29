@@ -736,7 +736,7 @@ app.delete("/reservations", csrfProtection, limiter, authenticateToken, async (r
 
 
 
-// 좌석 데이터 제공 API 시작
+// 예약 좌석 데이터 제공 API 시작
 app.get("/seats", limiter, authenticateToken, async (req, res) => {
   try {
     const rows = await db.query(`

@@ -817,8 +817,9 @@ router.get("/logs/notice/all", csrfProtection, limiter, authenticateToken, autho
           seat s ON b.seat_id = s.seat_id
         LEFT JOIN 
           user a ON l.admin_id = a.user_id
-        WHERE 
-          l.type = 'create' OR l.type = 'edit' OR l.type = 'delete' -- 공지사항 관련 로그만 조회
+        WHERE
+          (l.type = 'create' OR l.type = 'edit' OR l.type = 'delete') 
+          AND l.log_type = 'notice' -- 공지사항 관련 로그만 조회
         ORDER BY 
           l.log_date DESC
         `
@@ -883,7 +884,8 @@ router.get("/logs/book_restriction/all", csrfProtection, limiter, authenticateTo
         LEFT JOIN 
           user a ON l.admin_id = a.user_id
         WHERE 
-          l.type = 'create' OR l.type = 'edit' OR l.type = 'delete' -- 예약제한 관련 로그만 조회
+          (l.type = 'create' OR l.type = 'edit' OR l.type = 'delete') 
+          AND l.log_type = 'restriction' -- 예약제한 관련 로그만 조회
         ORDER BY 
           l.log_date DESC
         `
