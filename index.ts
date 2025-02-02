@@ -207,7 +207,6 @@ app.get("/csrf-token", csrfProtection, (req: Request, res: Response) => {
     res.json({
       csrfToken: csrfToken,
     }); // csrfToken 메서드 사용
-    console.log(csrfToken);
   } catch (err) {
     console.error("CSRF 토큰 생성 중 오류 발생:", err);
     res.status(500).json({
@@ -606,143 +605,154 @@ app.post(
 // *** 토큰 재발급 API 끝 ***
 
 // *** 좌석 예약 생성 API 시작 ***
-app.post("/reservations", csrfProtection, limiter, authenticateToken, async (req: Request, res: Response) => {
-  const userId = req.user?.userId; // 인증된 사용자 ID
-  const { seat_name } = req.body;
+app.post(
+  "/reservations",
+  csrfProtection,
+  limiter,
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const userId = req.user?.userId; // 인증된 사용자 ID
+    const { seat_name } = req.body;
 
-  if (!seat_name || typeof seat_name !== "string") {
-    res.status(400).json({ 
-      success: false, 
-      message: "유효하지 않은 좌석 이름입니다." 
-    });
-    return;
-  }
+    if (!seat_name || typeof seat_name !== "string") {
+      res.status(400).json({
+        success: false,
+        message: "유효하지 않은 좌석 이름입니다.",
+      });
+      return;
+    }
 
-  let connection;
-  try {
-    connection = await db.getConnection(); // 데이터베이스 연결
-    await connection.beginTransaction(); // 트랜잭션 시작
+    let connection;
+    try {
+      connection = await db.getConnection(); // 데이터베이스 연결
+      await connection.beginTransaction(); // 트랜잭션 시작
 
-    // Step 1: 기본 설정에서 사용 가능 시간 확인
-    const [defaultSettings] = await connection.query(
-      `
+      // Step 1: 기본 설정에서 사용 가능 시간 확인
+      const [defaultSettings] = await connection.query(
+        `
       SELECT available_start_time, available_end_time
       FROM default_settings 
       WHERE setting_id = 1
       `
-    );
+      );
 
-    const currentTime = new Date().toLocaleTimeString("en-US", { hour12: false });
-    if (currentTime < defaultSettings.available_start_time || currentTime > defaultSettings.available_end_time) {
-      throw { 
-        status: 400, 
-        message: `현재 시간에 예약이 불가능합니다.\n예약 가능 시간은 ${defaultSettings.available_start_time}부터 ${defaultSettings.available_end_time}까지입니다.`
-      };
-    }
+      const currentTime = new Date().toLocaleTimeString("en-US", {
+        hour12: false,
+      });
+      if (
+        currentTime < defaultSettings.available_start_time ||
+        currentTime > defaultSettings.available_end_time
+      ) {
+        throw {
+          status: 400,
+          message: `현재 시간에 예약이 불가능합니다.\n예약 가능 시간은 ${defaultSettings.available_start_time}부터 ${defaultSettings.available_end_time}까지입니다.`,
+        };
+      }
 
-    // Step 2: `seat_name`으로 `seat_id` 조회
-    const seatQuery = await connection.query(
-      `
+      // Step 2: `seat_name`으로 `seat_id` 조회
+      const seatQuery = await connection.query(
+        `
       SELECT seat_id 
       FROM seat 
       WHERE name = ?
       `,
-      [seat_name]
-    );
+        [seat_name]
+      );
 
-    if (seatQuery.length === 0) {
-      throw { 
-        status: 400, 
-        message: "존재하지 않는 좌석입니다." 
-      };
-    }
+      if (seatQuery.length === 0) {
+        throw {
+          status: 400,
+          message: "존재하지 않는 좌석입니다.",
+        };
+      }
 
-    const seat_id = seatQuery[0].seat_id;
+      const seat_id = seatQuery[0].seat_id;
 
-    // Step 3: 예약 제한 확인
-    const restrictions = await connection.query(
-      `
+      // Step 3: 예약 제한 확인
+      const restrictions = await connection.query(
+        `
       SELECT * 
       FROM book_restriction 
       WHERE FIND_IN_SET(?, seat_names) 
         AND restriction_start_date <= NOW() 
         AND restriction_end_date >= NOW()
       `,
-      [seat_name]
-    );
-    
-    if (restrictions.length > 0) {
-      throw { 
-        status: 400, 
-        message: "해당 좌석은 현재 예약이 제한되었습니다.\n공지사항을 확인해주세요." 
-      };
-    }
+        [seat_name]
+      );
 
-    // Step 4: 사용자가 이미 예약한 상태인지 확인
-    const existingReservation = await connection.query(
-      `
+      if (restrictions.length > 0) {
+        throw {
+          status: 400,
+          message:
+            "해당 좌석은 현재 예약이 제한되었습니다.\n공지사항을 확인해주세요.",
+        };
+      }
+
+      // Step 4: 사용자가 이미 예약한 상태인지 확인
+      const existingReservation = await connection.query(
+        `
       SELECT * 
       FROM book 
       WHERE user_id = ? AND state = 'book'
       `,
-      [userId]
-    );
-    
-    if (existingReservation.length > 0) {
-      throw { 
-        status: 400, 
-        message: "이미 예약한 좌석이 존재합니다. 퇴실 후 다시 예약해주세요." 
-      };
-    }
+        [userId]
+      );
 
-    // Step 5: 좌석 예약 상태 확인
-    const existingBooking = await connection.query(
-      "SELECT * FROM book WHERE seat_id = ? AND state = 'book'",
-      [seat_id]
-    );
+      if (existingReservation.length > 0) {
+        throw {
+          status: 400,
+          message: "이미 예약한 좌석이 존재합니다. 퇴실 후 다시 예약해주세요.",
+        };
+      }
 
-    if (existingBooking.length > 0) {
-      throw { 
-        status: 400, 
-        message: "이미 예약된 좌석입니다." 
-      };
-    }
+      // Step 5: 좌석 예약 상태 확인
+      const existingBooking = await connection.query(
+        "SELECT * FROM book WHERE seat_id = ? AND state = 'book'",
+        [seat_id]
+      );
 
-    // Step 6: 좌석 예약 생성
-    const result = await connection.query(
-      "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, NOW(), 'book')",
-      [userId, seat_id]
-    );
+      if (existingBooking.length > 0) {
+        throw {
+          status: 400,
+          message: "이미 예약된 좌석입니다.",
+        };
+      }
 
-    // Step 7: 예약 로그 기록
-    await connection.query(
-      `
+      // Step 6: 좌석 예약 생성
+      const result = await connection.query(
+        "INSERT INTO book (user_id, seat_id, book_date, state) VALUES (?, ?, NOW(), 'book')",
+        [userId, seat_id]
+      );
+
+      // Step 7: 예약 로그 기록
+      await connection.query(
+        `
       INSERT INTO logs (book_id, log_date, type, log_type) 
       VALUES (?, NOW(), 'book', 'book')
       `,
-      [result.insertId]
-    );
+        [result.insertId]
+      );
 
-    // Step 8: 트랜잭션 커밋
-    await connection.commit();
+      // Step 8: 트랜잭션 커밋
+      await connection.commit();
 
-    res.status(201).json({
-      success: true,
-      reservation_id: result.insertId,
-      message: "예약이 성공적으로 완료되었습니다.",
-    });
+      res.status(201).json({
+        success: true,
+        reservation_id: result.insertId,
+        message: "예약이 성공적으로 완료되었습니다.",
+      });
+    } catch (err) {
+      if (connection) await connection.rollback(); // 에러 발생 시 트랜잭션 롤백
 
-  } catch (err) {
-    if (connection) await connection.rollback(); // 에러 발생 시 트랜잭션 롤백
-
-    res.status(err.status || 500).json({
-      success: false,
-      message: err.message || "예약 처리 중 서버 오류가 발생했습니다.",
-    });
-  } finally {
-    if (connection) connection.release(); // 연결 해제
+      res.status(err.status || 500).json({
+        success: false,
+        message: err.message || "예약 처리 중 서버 오류가 발생했습니다.",
+      });
+    } finally {
+      if (connection) connection.release(); // 연결 해제
+    }
   }
-});
+);
 // *** 좌석 예약 생성 API 끝 ***
 
 // 좌석 퇴실 API 시작
@@ -848,12 +858,15 @@ app.get("/seats/:seatName", limiter, authenticateToken, async (req, res) => {
       SELECT 
         seat_id,
         name AS seat_name,
-        pc_surpport,
+        pc_support,
         image_path,
-        (SELECT basic_manners FROM default_settings LIMIT 1) AS basic_manners,
+        ds.basic_manners,
+        ds.available_end_time,
         warning
-      FROM seat
-      WHERE name = ?
+      FROM seat s
+      CROSS JOIN default_settings ds
+      WHERE s.name = ?
+      LIMIT 1
       `,
       [seatName]
     );
@@ -885,9 +898,10 @@ app.get("/seats/:seatName", limiter, authenticateToken, async (req, res) => {
         seatId: seat.seat_id,
         seatName: seat.seat_name,
         basicManners: seat.basic_manners,
+        availableEndTime: seat.available_end_time, // 예약 종료 시간 추가
         warning: seat.warning,
+        pc_support: seat.pc_support,
         image: imageBase64, // 이미지 데이터를 포함
-        pc_support: seat.pc_surpport,
       },
     });
   } catch (err) {
@@ -1383,7 +1397,6 @@ app.get(
   authenticateToken,
   (req: Request, res: Response) => {
     const userId = req.user?.userId; // 인증된 사용자 정보에서 userId 추출
-    console.log(userId);
 
     if (!userId) {
       res.status(403).json({
@@ -1634,6 +1647,90 @@ app.get(
   }
 );
 // 예약 정보 조회 API 끝
+
+// 지금 내 예약 정보 조회 API 시작
+app.get(
+  "/users/reservations/current",
+  csrfProtection,
+  limiter,
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const userId = req.user?.userId; // 인증된 사용자 ID
+
+    if (!userId) {
+      res
+        .status(403)
+        .json({ success: false, message: "사용자가 인증되지 않았습니다." });
+      return;
+    }
+
+    try {
+      // 예약 정보 가져오기
+      const reservations = await db.query(
+        `
+      SELECT 
+        CONCAT(
+            DATE_FORMAT(b.book_date, '%c월 %e일'),
+            ' (',
+            ELT(WEEKDAY(b.book_date) + 1, '일', '월', '화', '수', '목', '금', '토'),
+            ') ',
+            DATE_FORMAT(b.book_date, '%H:%i')
+        ) AS book_date,
+        b.state,
+        s.name AS seat_name,
+        s.pc_support,
+        s.image_path
+      FROM 
+          book b
+      LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+      WHERE 
+          b.user_id = ? 
+          AND b.state = 'book' -- 현재 예약 상태가 'book'인 것만 가져옴
+      ORDER BY 
+          b.book_date DESC;
+      `,
+        [userId]
+      );
+
+      // 이미지 파일을 Base64로 변환하여 추가
+      const reservationsWithImages = reservations.map((reservation: any) => {
+        let imageBase64 = "";
+        const absoluteImagePath = path.join(
+          uploadDir,
+          path.basename(reservation.image_path || "")
+        );
+
+        if (fs.existsSync(absoluteImagePath)) {
+          const imageBuffer = fs.readFileSync(absoluteImagePath); // 이미지 파일 읽기
+          imageBase64 = `data:image/png;base64,${imageBuffer.toString(
+            "base64"
+          )}`; // Base64 변환
+        }
+
+        return {
+          bookDate: reservation.book_date,
+          state: reservation.state,
+          seatName: reservation.seat_name,
+          pcSupport: reservation.pc_support,
+          image: imageBase64, // Base64 변환된 이미지 추가
+        };
+      });
+
+      res.status(200).json({
+        success: true,
+        reservations: reservationsWithImages,
+      });
+    } catch (err) {
+      console.error("예약 정보 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
+      });
+    }
+  }
+);
+// 지금 예약 정보 조회 API 끝
 
 // 공지사항 목록 조회 API 시작
 app.get("/notice", limiter, (req: Request, res: Response) => {
