@@ -39,6 +39,8 @@ const limiter = rateLimit({
 
 import nodemailer from "nodemailer"; // 이메일 전송 라이브러리
 import bodyParser from "body-parser";
+import KorDate from "./utils/KorDate";
+import dayjs from "dayjs";
 
 // .env 파일 로드
 dotenv.config();
@@ -168,11 +170,7 @@ export const initializeForceExitScheduler = async () => {
     const cronExpression = `${minute} ${hour} * * *`; // 종료 시간에 맞게 크론 표현식 생성
     currentScheduler = cron.schedule(cronExpression, async () => {
       try {
-        console.log(
-          `[${new Date().toLocaleTimeString("en-US", {
-            hour12: false,
-          })}] 강제 퇴실 스케줄러 실행`
-        );
+        console.log(`[${KorDate()}] 강제 퇴실 스케줄러 실행`);
 
         // 강제 퇴실 API 호출
         const response = await axios.post(
@@ -636,9 +634,8 @@ app.post(
       `
       );
 
-      const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour12: false,
-      });
+      const currentTime = KorDate();
+
       if (
         currentTime < defaultSettings.available_start_time ||
         currentTime > defaultSettings.available_end_time
@@ -1092,7 +1089,9 @@ app.post(
       const verificationCode = generateRandomCode(6);
 
       // Step 2: 인증 코드 저장 (유효 기간 5분)
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5분 후
+      const expiresAt = new Date(
+        new Date().getTime() + 9 * 60 * 60 * 1000 + 5 * 60 * 1000
+      ); // 5분 후
       await connection.query(
         "INSERT INTO email_verification (email, verification_code, expires_at) VALUES (?, ?, ?)",
         [email, verificationCode, expiresAt]
@@ -1190,7 +1189,10 @@ app.post(
 
       const { verification_code: storedCode, expires_at: expiresAt } = record;
 
-      if (new Date() > new Date(expiresAt)) {
+      if (
+        new Date(new Date().getTime() + 9 * 60 * 60 * 1000) >
+        new Date(new Date(expiresAt).getTime() + 9 * 60 * 60 * 1000)
+      ) {
         res
           .status(400)
           .json({ success: false, message: "인증번호가 만료되었습니다." });
@@ -1449,23 +1451,13 @@ app.patch(
   limiter,
   authenticateToken,
   (req: Request, res: Response) => {
-    const { name, email, password, newpassword, isVerified } = req.body;
+    const { email, password, newpassword, isVerified } = req.body;
     const userId = req.user?.userId; // 인증된 사용자 ID
 
-    if (!userId || !name || !email) {
+    if (!userId || !email) {
       res.status(400).json({
         success: false,
         message: "필수 정보가 누락되었습니다.",
-      });
-      return;
-    }
-    if (
-      !validator.isLength(name, { min: 2, max: 30 }) ||
-      !/^[가-힣a-zA-Z\s]+$/.test(name)
-    ) {
-      res.status(400).json({
-        success: false,
-        message: "이름은 2~30자의 한글, 영문 및 공백만 허용됩니다.",
       });
       return;
     }
@@ -1475,44 +1467,33 @@ app.patch(
         .json({ success: false, message: "유효한 이메일 주소를 입력하세요." });
       return;
     }
-    if (
-      !validator.isStrongPassword(password, {
-        minLength: 8,
-        minNumbers: 1,
-        minSymbols: 1,
-        minUppercase: 0,
-      }) ||
-      !allowedSymbolsForPassword.test(password) // 허용된 문자만 포함하지 않은 경우
-    ) {
-      res.status(400).json({
-        success: false,
-        message:
-          "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-      });
-      return;
-    }
-    if (
-      !validator.isStrongPassword(newpassword, {
-        minLength: 8,
-        minNumbers: 1,
-        minSymbols: 1,
-        minUppercase: 0,
-      }) ||
-      !allowedSymbolsForPassword.test(newpassword) // 허용된 문자만 포함하지 않은 경우
-    ) {
-      res.status(400).json({
-        success: false,
-        message:
-          "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
-      });
-      return;
-    }
-    if (password === newpassword) {
-      res.status(400).json({
-        success: false,
-        message: "새 비밀번호는 이전 비밀번호와 동일할 수 없습니다.",
-      });
-      return;
+
+    if (password?.trim() && newpassword?.trim()) {
+      // 비밀번호가 빈 문자열이거나 공백이면 건너뜀
+      if (
+        !validator.isStrongPassword(newpassword, {
+          minLength: 8,
+          minNumbers: 1,
+          minSymbols: 1,
+          minUppercase: 0,
+        }) ||
+        !allowedSymbolsForPassword.test(newpassword) // 허용된 문자만 포함하지 않은 경우
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 포함해야 합니다.",
+        });
+        return;
+      }
+
+      if (password === newpassword) {
+        res.status(400).json({
+          success: false,
+          message: "새 비밀번호는 이전 비밀번호와 동일할 수 없습니다.",
+        });
+        return;
+      }
     }
 
     // Step 1: 사용자 정보 조회
@@ -1560,11 +1541,11 @@ app.patch(
       })
       .then(() => {
         // Step 4: 이메일 및 이름 변경
-        if (email || name) {
-          return db.query(
-            "UPDATE user SET email = ?, name = ? WHERE user_id = ?",
-            [email, name, userId]
-          );
+        if (email) {
+          return db.query("UPDATE user SET email = ? WHERE user_id = ?", [
+            email,
+            userId,
+          ]);
         }
         return Promise.resolve();
       })
@@ -1598,8 +1579,11 @@ app.get(
   csrfProtection,
   limiter,
   authenticateToken,
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const userId = req.user?.userId; // 인증된 사용자 ID
+    const page = parseInt(req.query.page as string) || 1; // 기본값 1페이지
+    const limit = 10; // 페이지당 5개
+    const offset = (page - 1) * limit;
 
     if (!userId) {
       res
@@ -1608,42 +1592,73 @@ app.get(
       return;
     }
 
-    db.query(
-      `
-    SELECT 
-        b.book_id,
-        DATE_FORMAT(b.book_date, '%Y-%m-%d %H:%i') AS book_date,
-        b.state,
-        s.name AS seat_name,
-        l.type AS log_type,
-        l.log_date,
-        l.reason AS cancel_reason
-    FROM 
-        book b
-    LEFT JOIN 
-        seat s ON b.seat_id = s.seat_id
-    LEFT JOIN 
-        logs l ON b.book_id = l.book_id AND l.log_type = 'book' AND l.type = 'cancel'
-    WHERE 
-        b.user_id = ?
-    ORDER BY 
-        b.book_date DESC
-    `,
-      [userId]
-    )
-      .then((rows: any[]) => {
-        res.status(200).json({
-          success: true,
-          reservations: rows,
-        });
-      })
-      .catch((err: any) => {
-        console.error("예약 정보 조회 중 오류 발생:", err);
-        res.status(500).json({
+    let connection;
+    try {
+      connection = await db.getConnection();
+
+      // 전체 예약 개수 조회
+      const totalReservations = await connection.query(
+        `SELECT COUNT(*) AS totalReservations FROM book WHERE user_id = ?`,
+        [userId]
+      );
+
+      if (totalReservations === 0) {
+        res
+          .status(200)
+          .json({
+            success: true,
+            totalPages: 0,
+            currentPage: page,
+            totalReservations: 0,
+            reservations: [],
+          });
+        return;
+      }
+
+      // 예약 데이터 조회
+      const reservations = await connection.query(
+        `
+      SELECT 
+          b.book_id,
+          DATE_FORMAT(b.book_date, '%Y-%m-%d %H:%i') AS book_date,
+          b.state,
+          s.name AS seat_name,
+          s.pc_support,
+          s.image_path,
+          l.reason AS cancel_reason
+      FROM 
+          book b
+      LEFT JOIN 
+          seat s ON b.seat_id = s.seat_id
+      LEFT JOIN 
+          logs l ON b.book_id = l.book_id AND l.log_type = 'book' AND l.type = 'cancel'
+      WHERE 
+          b.user_id = ?
+      ORDER BY 
+          b.book_date DESC
+      LIMIT ? OFFSET ?;
+      `,
+        [userId, limit, offset]
+      );
+
+      res.status(200).json({
+        success: true,
+        totalPages: Math.ceil(totalReservations / limit),
+        currentPage: page,
+        totalReservations: totalReservations[0].totalReservations,
+        reservations,
+      });
+    } catch (err) {
+      console.error("예약 정보 조회 중 오류 발생:", err);
+      res
+        .status(500)
+        .json({
           success: false,
           message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
         });
-      });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 예약 정보 조회 API 끝
@@ -1732,40 +1747,65 @@ app.get(
 );
 // 지금 예약 정보 조회 API 끝
 
-// 공지사항 목록 조회 API 시작
-app.get("/notice", limiter, (req: Request, res: Response) => {
-  const query = `
-    SELECT 
-      notice_uuid,
-      notice_id, 
-      title, 
-      DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
-      views 
-    FROM notice 
-    ORDER BY date DESC`;
+// 공지사항 제목 검색 + 페이징 API
+app.get("/notice/search", limiter, async (req: Request, res: Response) => {
+  const searchQuery = (req.query.query as string) || ""; // 검색어 (기본값: 빈 문자열)
+  const page = parseInt(req.query.page as string) || 1; // 현재 페이지 (기본값: 1)
+  const limit = 10; // 한 페이지당 공지 개수
+  const offset = (page - 1) * limit;
 
-  db.query(query)
-    .then((rows) => {
-      res.status(200).json({
-        success: true,
-        notices: rows.map((row) => ({
-          notice_uuid: row.notice_uuid,
-          notice_id: row.notice_id,
-          title: row.title,
-          date: row.formatted_date,
-          views: row.views,
-        })),
-      });
-    })
-    .catch((err) => {
-      console.error("공지사항 데이터 조회 중 오류 발생:", err);
-      res.status(500).json({
-        success: false,
-        message: "공지사항 데이터를 가져오는 중 오류가 발생했습니다.",
-      });
+  let connection;
+  try {
+    connection = await db.getConnection();
+
+    // Step 1: 전체 검색 결과 개수 조회
+    const totalCount = await connection.query(
+      `SELECT COUNT(*) AS totalCount FROM notice WHERE title LIKE ?`,
+      [`%${searchQuery}%`]
+    );
+
+    // Step 2: 검색 결과 조회 (페이징 적용)
+    const notices = await connection.query(
+      `
+      SELECT 
+        notice_uuid,
+        notice_id, 
+        title, 
+        DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date, 
+        views 
+      FROM notice 
+      WHERE title LIKE ?
+      ORDER BY date DESC
+      LIMIT ? OFFSET ?;
+      `,
+      [`%${searchQuery}%`, limit, offset]
+    );
+
+    // Step 3: 응답 반환
+    res.status(200).json({
+      success: true,
+      totalPages: Math.ceil(totalCount / limit), // 전체 페이지 수
+      currentPage: page, // 현재 페이지
+      totalCount: totalCount[0].totalCount, // 전체 검색 결과 개수
+      notices: notices.map((row) => ({
+        notice_uuid: row.notice_uuid,
+        notice_id: row.notice_id,
+        title: row.title,
+        date: row.formatted_date,
+        views: row.views,
+      })),
     });
+  } catch (err) {
+    console.error("공지사항 검색 중 오류 발생:", err);
+    res.status(500).json({
+      success: false,
+      message: "공지사항 검색 중 오류가 발생했습니다.",
+    });
+  } finally {
+    if (connection) connection.release();
+  }
 });
-// 공지사항 목록 조회 API 끝
+// 공지사항 검색 필터 API 끝
 
 // 공지사항 내용 조회 API 시작
 app.get("/notice/:uuid", async (req: Request, res: Response) => {
@@ -1857,9 +1897,7 @@ app.post("/force-exit/schedule/endtime", async (req, res) => {
     );
 
     const availableEndTime = defaultSettings?.available_end_time || "23:59:59";
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-      hour12: false,
-    });
+    const currentTime = KorDate();
 
     // 현재 시간이 종료 시간을 넘어섰는지 확인
     if (currentTime < availableEndTime) {

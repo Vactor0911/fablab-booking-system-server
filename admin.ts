@@ -208,91 +208,100 @@ router.get(
 // 특정 좌석 정보 조회 API 끝
 
 // 강제 퇴실 API 시작
-router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-  const { seatName, reason, userId } = req.body;
+router.post(
+  "/force-exit",
+  csrfProtection,
+  limiter,
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { seatName, reason, userId } = req.body;
 
-  if (!seatName) {
-     res.status(400).json({
-      success: false,
-      message: "좌석 이름은 필수 항목입니다.",
-    });
-    return;
-  }
-
-  // 기본 퇴실 사유 설정
-  const exitReason = reason && validator.isLength(reason, { max: 100 }) && !allowedSymbols.test(reason) 
-      ? reason 
-      : "관리자에 의해 강제 퇴실되었습니다.";
-
-  let connection: any;
-  try {
-    connection = await db.getConnection(); // 트랜잭션 시작
-    await connection.beginTransaction();
-
-    // Step 1: 좌석 정보 조회
-    const [seat] = await connection.query(
-      `SELECT seat_id FROM seat WHERE name = ?`,
-      [seatName]
-    );
-
-    if (!seat) {
-      res.status(404).json({
+    if (!seatName) {
+      res.status(400).json({
         success: false,
-        message: "해당 좌석을 찾을 수 없습니다.",
+        message: "좌석 이름은 필수 항목입니다.",
       });
       return;
     }
 
-    const seatId = seat.seat_id;
+    // 기본 퇴실 사유 설정
+    const exitReason =
+      reason &&
+      validator.isLength(reason, { max: 100 }) &&
+      !allowedSymbols.test(reason)
+        ? reason
+        : "관리자에 의해 강제 퇴실되었습니다.";
 
-    // Step 2: 예약 정보 가져오기
-    const [reservation] = await connection.query(
-      `SELECT b.book_id, b.user_id, u.email, u.name 
+    let connection: any;
+    try {
+      connection = await db.getConnection(); // 트랜잭션 시작
+      await connection.beginTransaction();
+
+      // Step 1: 좌석 정보 조회
+      const [seat] = await connection.query(
+        `SELECT seat_id FROM seat WHERE name = ?`,
+        [seatName]
+      );
+
+      if (!seat) {
+        res.status(404).json({
+          success: false,
+          message: "해당 좌석을 찾을 수 없습니다.",
+        });
+        return;
+      }
+
+      const seatId = seat.seat_id;
+
+      // Step 2: 예약 정보 가져오기
+      const [reservation] = await connection.query(
+        `SELECT b.book_id, b.user_id, u.email, u.name 
        FROM book b
        LEFT JOIN user u ON b.user_id = u.user_id
        WHERE b.seat_id = ? AND b.state = 'book'`,
-      [seatId]
-    );
+        [seatId]
+      );
 
-    if (!reservation) {
-      res.status(404).json({
-        success: false,
-        message: "해당 좌석에 활성화된 예약이 없습니다.",
+      if (!reservation) {
+        res.status(404).json({
+          success: false,
+          message: "해당 좌석에 활성화된 예약이 없습니다.",
+        });
+        return;
+      }
+
+      const { book_id, email, name } = reservation;
+
+      // Step 3: 예약 상태를 'cancel'로 업데이트
+      await connection.query(
+        `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+        [book_id]
+      );
+
+      // Step 4: 예약 로그 기록
+      await connection.query(
+        `INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id) VALUES (?, NOW(), 'cancel', 'book', ?, ?)`,
+        [book_id, exitReason, userId]
+      );
+
+      // Step 5: 이메일 전송
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.NODEMAILER_USER,
+          pass: process.env.NODEMAILER_PASS,
+        },
       });
-      return;
-    }
 
-    const { book_id, email, name } = reservation;
-
-    // Step 3: 예약 상태를 'cancel'로 업데이트
-    await connection.query(
-      `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
-      [book_id]
-    );
-
-    // Step 4: 예약 로그 기록
-    await connection.query(
-      `INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id) VALUES (?, NOW(), 'cancel', 'book', ?, ?)`,
-      [book_id, exitReason, userId]
-    );
-
-    // Step 5: 이메일 전송
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false,
-      auth: {
-        user: process.env.NODEMAILER_USER,
-        pass: process.env.NODEMAILER_PASS,
-      },
-    });
-
-    const mailOptions = {
-      from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
-      to: email,
-      subject: `[FabLab 예약 시스템] ${seatName} 강제 퇴실 알림`,
-      html: `
+      const mailOptions = {
+        from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+        to: email,
+        subject: `[FabLab 예약 시스템] ${seatName} 강제 퇴실 알림`,
+        html: `
         <h1>강제 퇴실 알림</h1>
         <p>${name}님,</p>
         <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
@@ -302,32 +311,33 @@ router.post("/force-exit", csrfProtection, limiter, authenticateToken, authorize
         </ul>
         <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
       `,
-    };
+      };
 
-    try {
-      await transporter.sendMail(mailOptions);
-    } catch (emailError) {
-      console.error("이메일 전송 중 오류 발생:", emailError);
+      try {
+        await transporter.sendMail(mailOptions);
+      } catch (emailError) {
+        console.error("이메일 전송 중 오류 발생:", emailError);
+      }
+
+      // Step 6: 트랜잭션 커밋
+      await connection.commit();
+
+      res.status(200).json({
+        success: true,
+        message: "강제 퇴실 처리가 완료되었으며, 이메일이 전송되었습니다.",
+      });
+    } catch (err) {
+      if (connection) await connection.rollback(); // 에러 발생 시 롤백
+      console.error("강제 퇴실 처리 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "강제 퇴실 처리 중 서버 오류가 발생했습니다.",
+      });
+    } finally {
+      if (connection) connection.release(); // DB 연결 해제
     }
-
-    // Step 6: 트랜잭션 커밋
-    await connection.commit();
-
-    res.status(200).json({
-      success: true,
-      message: "강제 퇴실 처리가 완료되었으며, 이메일이 전송되었습니다.",
-    });
-  } catch (err) {
-    if (connection) await connection.rollback(); // 에러 발생 시 롤백
-    console.error("강제 퇴실 처리 중 오류 발생:", err);
-    res.status(500).json({
-      success: false,
-      message: "강제 퇴실 처리 중 서버 오류가 발생했습니다.",
-    });
-  } finally {
-    if (connection) connection.release(); // DB 연결 해제
   }
-});
+);
 // 강제 퇴실 API 끝
 
 // 공지사항 수정 API 시작
@@ -576,69 +586,64 @@ router.get(
   limiter,
   authenticateToken,
   authorizeAdmin,
-  (req, res) => {
-    db.getConnection()
-      .then((connection) => {
-        return connection
-          .query(
-            `
-        SELECT 
-          l.log_id,
-          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-          l.log_type,           -- 로그 유형 (book, notice, restriction)
-          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-          u.name AS user_name,
-          u.id AS user_info,
-          s.name AS seat_name,
-          l.reason AS restriction_reason,
-          a.name AS admin_name
-        FROM 
-          logs l
-        LEFT JOIN 
-          book b ON l.book_id = b.book_id AND l.log_type = 'book'
-        LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice'
-        LEFT JOIN 
-          user u ON b.user_id = u.user_id
-        LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-        LEFT JOIN 
-          user a ON l.admin_id = a.user_id
-        WHERE
-          l.book_id = b.book_id
-        ORDER BY 
-          l.log_date DESC
-        `
-          )
-          .finally(() => connection.release()); // 연결 해제 추가
-      })
-      .then((logs) => {
-        // logs가 배열이 아닐 경우 변환
-        if (!Array.isArray(logs)) {
-          logs = Object.values(logs);
-        }
+  async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const offset = (page - 1) * limit;
 
-        if (logs.length === 0) {
-          res.status(404).json({
-            success: false,
-            message: "로그 데이터가 없습니다.",
+    let connection;
+    try {
+      connection = await db.getConnection();
+
+      // 전체 로그 개수 조회
+      const totalLogs = await connection.query(
+        "SELECT COUNT(*) AS totalLogs FROM logs"
+      );
+
+      if (totalLogs === 0) {
+        res
+          .status(200)
+          .json({
+            success: true,
+            totalPages: 0,
+            currentPage: page,
+            totalLogs: 0,
+            logs: [],
           });
-          return;
-        }
+        return;
+      }
 
-        res.status(200).json({
-          success: true,
-          logs: logs,
-        });
-      })
-      .catch((err) => {
-        console.error("모든 로그 조회 중 오류 발생:", err);
+      // 로그 데이터 조회 (페이징 적용)
+      const [logs] = await connection.query(
+        `
+      SELECT 
+        l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+        u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
+      FROM logs l
+      LEFT JOIN book b ON l.book_id = b.book_id
+      LEFT JOIN notice n ON l.notice_id = n.notice_id
+      LEFT JOIN user u ON b.user_id = u.user_id
+      LEFT JOIN seat s ON b.seat_id = s.seat_id
+      LEFT JOIN user a ON l.admin_id = a.user_id
+      ORDER BY l.log_date DESC
+      LIMIT ? OFFSET ?;
+      `,
+        [limit, offset]
+      );
 
-        res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-        });
+      res.status(200).json({
+        success: true,
+        totalPages: Math.ceil(totalLogs / limit),
+        currentPage: page,
+        totalLogs: totalLogs[0].totalLogs,
+        logs,
       });
+    } catch (err) {
+      console.error("모든 로그 조회 중 오류 발생:", err);
+      res.status(500).json({ success: false, message: "서버 오류 발생" });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 모든 로그 조회 API 끝
@@ -650,67 +655,60 @@ router.get(
   limiter,
   authenticateToken,
   authorizeAdmin,
-  (req, res) => {
-    db.getConnection()
-      .then((connection) => {
-        return connection
-          .query(
-            `
-        SELECT 
-          l.log_id,
-          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-          l.log_type,           -- 로그 유형 (book, notice, restriction)
-          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-          u.name AS user_name,
-          u.id AS user_info,
-          s.name AS seat_name,
-          l.reason AS restriction_reason,
-          a.name AS admin_name
-        FROM 
-          logs l
-        LEFT JOIN 
-          book b ON l.book_id = b.book_id AND l.log_type = 'book'
-        LEFT JOIN 
-          user u ON b.user_id = u.user_id
-        LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-        LEFT JOIN 
-          user a ON l.admin_id = a.user_id
-        WHERE 
-          l.type = 'book' -- 예약 로그만 조회
-          AND b.book_id = l.book_id
-        ORDER BY 
-          l.log_date DESC
-        `
-          )
-          .finally(() => connection.release()); // 연결 해제 추가
-      })
-      .then((logs) => {
-        // logs가 배열이 아닐 경우 변환
-        if (!Array.isArray(logs)) {
-          logs = Object.values(logs);
-        }
+  async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const offset = (page - 1) * limit;
 
-        if (logs.length === 0) {
-          res.status(404).json({
-            success: false,
-            message: "로그 데이터가 없습니다.",
+    let connection;
+    try {
+      connection = await db.getConnection();
+      const totalLogs = await connection.query(
+        "SELECT COUNT(*) AS totalLogs FROM logs WHERE log_type = 'book'"
+      );
+
+      if (totalLogs === 0) {
+        res
+          .status(200)
+          .json({
+            success: true,
+            totalPages: 0,
+            currentPage: page,
+            totalLogs: 0,
+            logs: [],
           });
-          return;
-        }
+        return;
+      }
 
-        res.status(200).json({
-          success: true,
-          logs: logs,
-        });
-      })
-      .catch((err) => {
-        console.error("예약 로그 조회 중 오류 발생:", err);
-        res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-        });
+      const [logs] = await connection.query(
+        `
+      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+             u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
+      FROM logs l
+      LEFT JOIN book b ON l.book_id = b.book_id
+      LEFT JOIN user u ON b.user_id = u.user_id
+      LEFT JOIN seat s ON b.seat_id = s.seat_id
+      LEFT JOIN user a ON l.admin_id = a.user_id
+      WHERE l.log_type = 'book'
+      ORDER BY l.log_date DESC
+      LIMIT ? OFFSET ?;
+      `,
+        [limit, offset]
+      );
+
+      res.status(200).json({
+        success: true,
+        totalPages: Math.ceil(totalLogs / limit),
+        currentPage: page,
+        totalLogs: totalLogs[0].totalLogs,
+        logs,
       });
+    } catch (err) {
+      console.error("예약 로그 조회 중 오류 발생:", err);
+      res.status(500).json({ success: false, message: "서버 오류 발생" });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 예약 로그 조회 API 끝
@@ -722,67 +720,60 @@ router.get(
   limiter,
   authenticateToken,
   authorizeAdmin,
-  (req, res) => {
-    db.getConnection()
-      .then((connection) => {
-        return connection
-          .query(
-            `
-        SELECT 
-          l.log_id,
-          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-          l.log_type,           -- 로그 유형 (book, notice, restriction)
-          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-          u.name AS user_name,
-          u.id AS user_info,
-          s.name AS seat_name,
-          l.reason AS restriction_reason,
-          a.name AS admin_name
-        FROM 
-          logs l
-        LEFT JOIN 
-          book b ON l.book_id = b.book_id AND l.log_type = 'book'
-        LEFT JOIN 
-          user u ON b.user_id = u.user_id
-        LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-        LEFT JOIN 
-          user a ON l.admin_id = a.user_id
-        WHERE 
-          l.type = 'end' -- 퇴실 로그만 조회
-          AND b.book_id = l.book_id
-        ORDER BY 
-          l.log_date DESC
-        `
-          )
-          .finally(() => connection.release()); // 연결 해제 추가
-      })
-      .then((logs) => {
-        // logs가 배열이 아닐 경우 변환
-        if (!Array.isArray(logs)) {
-          logs = Object.values(logs);
-        }
+  async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const offset = (page - 1) * limit;
 
-        if (logs.length === 0) {
-          res.status(404).json({
-            success: false,
-            message: "로그 데이터가 없습니다.",
+    let connection;
+    try {
+      connection = await db.getConnection();
+      const totalLogs = await connection.query(
+        "SELECT COUNT(*) AS totalLogs FROM logs WHERE type = 'end'"
+      );
+
+      if (totalLogs === 0) {
+        res
+          .status(200)
+          .json({
+            success: true,
+            totalPages: 0,
+            currentPage: page,
+            totalLogs: 0,
+            logs: [],
           });
-          return;
-        }
+        return;
+      }
 
-        res.status(200).json({
-          success: true,
-          logs: logs,
-        });
-      })
-      .catch((err) => {
-        console.error("예약 로그 조회 중 오류 발생:", err);
-        res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-        });
+      const [logs] = await connection.query(
+        `
+      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+             u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
+      FROM logs l
+      LEFT JOIN book b ON l.book_id = b.book_id
+      LEFT JOIN user u ON b.user_id = u.user_id
+      LEFT JOIN seat s ON b.seat_id = s.seat_id
+      LEFT JOIN user a ON l.admin_id = a.user_id
+      WHERE l.type = 'end'
+      ORDER BY l.log_date DESC
+      LIMIT ? OFFSET ?;
+      `,
+        [limit, offset]
+      );
+
+      res.status(200).json({
+        success: true,
+        totalPages: Math.ceil(totalLogs / limit),
+        currentPage: page,
+        totalLogs: totalLogs[0].totalLogs,
+        logs,
       });
+    } catch (err) {
+      console.error("퇴실 로그 조회 중 오류 발생:", err);
+      res.status(500).json({ success: false, message: "서버 오류 발생" });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 퇴실 로그 조회 API 끝
@@ -794,67 +785,60 @@ router.get(
   limiter,
   authenticateToken,
   authorizeAdmin,
-  (req, res) => {
-    db.getConnection()
-      .then((connection) => {
-        return connection
-          .query(
-            `
-        SELECT 
-          l.log_id,
-          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-          l.log_type,           -- 로그 유형 (book, notice, restriction)
-          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-          u.name AS user_name,
-          u.id AS user_info,
-          s.name AS seat_name,
-          l.reason AS restriction_reason,
-          a.name AS admin_name
-        FROM 
-          logs l
-        LEFT JOIN 
-          book b ON l.book_id = b.book_id AND l.log_type = 'book'
-        LEFT JOIN 
-          user u ON b.user_id = u.user_id
-        LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-        LEFT JOIN 
-          user a ON l.admin_id = a.user_id
-        WHERE 
-          l.type = 'cancel' -- 강제 퇴실 로그만 조회
-          AND b.book_id = l.book_id
-        ORDER BY 
-          l.log_date DESC
-        `
-          )
-          .finally(() => connection.release()); // 연결 해제 추가
-      })
-      .then((logs) => {
-        // logs가 배열이 아닐 경우 변환
-        if (!Array.isArray(logs)) {
-          logs = Object.values(logs);
-        }
+  async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const offset = (page - 1) * limit;
 
-        if (logs.length === 0) {
-          res.status(404).json({
-            success: false,
-            message: "로그 데이터가 없습니다.",
+    let connection;
+    try {
+      connection = await db.getConnection();
+      const totalLogs = await connection.query(
+        "SELECT COUNT(*) AS totalLogs FROM logs WHERE type = 'cancel'"
+      );
+
+      if (totalLogs === 0) {
+        res
+          .status(200)
+          .json({
+            success: true,
+            totalPages: 0,
+            currentPage: page,
+            totalLogs: 0,
+            logs: [],
           });
-          return;
-        }
+        return;
+      }
 
-        res.status(200).json({
-          success: true,
-          logs: logs,
-        });
-      })
-      .catch((err) => {
-        console.error("예약 로그 조회 중 오류 발생:", err);
-        res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-        });
+      const [logs] = await connection.query(
+        `
+      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+             u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
+      FROM logs l
+      LEFT JOIN book b ON l.book_id = b.book_id
+      LEFT JOIN user u ON b.user_id = u.user_id
+      LEFT JOIN seat s ON b.seat_id = s.seat_id
+      LEFT JOIN user a ON l.admin_id = a.user_id
+      WHERE l.type = 'cancel'
+      ORDER BY l.log_date DESC
+      LIMIT ? OFFSET ?;
+      `,
+        [limit, offset]
+      );
+
+      res.status(200).json({
+        success: true,
+        totalPages: Math.ceil(totalLogs / limit),
+        currentPage: page,
+        totalLogs: totalLogs[0].totalLogs,
+        logs,
       });
+    } catch (err) {
+      console.error("강제 퇴실 로그 조회 중 오류 발생:", err);
+      res.status(500).json({ success: false, message: "서버 오류 발생" });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 강제 퇴실 로그 조회 API 끝
@@ -866,69 +850,59 @@ router.get(
   limiter,
   authenticateToken,
   authorizeAdmin,
-  (req, res) => {
-    db.getConnection()
-      .then((connection) => {
-        return connection
-          .query(
-            `
-        SELECT 
-          l.log_id,
-          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-          l.log_type,           -- 로그 유형 (book, notice, restriction)
-          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-          u.name AS user_name,
-          u.id AS user_info,
-          s.name AS seat_name,
-          l.reason AS restriction_reason,
-          a.name AS admin_name
-        FROM 
-          logs l
-        LEFT JOIN 
-          book b ON l.book_id = b.book_id AND l.log_type = 'book'
-        LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'notice' AND n.admin_id = l.admin_id
-        LEFT JOIN 
-          user u ON b.user_id = u.user_id
-        LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-        LEFT JOIN 
-          user a ON l.admin_id = a.user_id
-        WHERE
-          (l.type = 'create' OR l.type = 'edit' OR l.type = 'delete') 
-          AND l.log_type = 'notice' -- 공지사항 관련 로그만 조회
-        ORDER BY 
-          l.log_date DESC
-        `
-          )
-          .finally(() => connection.release()); // 연결 해제 추가
-      })
-      .then((logs) => {
-        // logs가 배열이 아닐 경우 변환
-        if (!Array.isArray(logs)) {
-          logs = Object.values(logs);
-        }
+  async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const offset = (page - 1) * limit;
 
-        if (logs.length === 0) {
-          res.status(404).json({
-            success: false,
-            message: "로그 데이터가 없습니다.",
+    let connection;
+    try {
+      connection = await db.getConnection();
+      const totalLogs = await connection.query(
+        "SELECT COUNT(*) AS totalLogs FROM logs WHERE log_type = 'notice'"
+      );
+
+      if (totalLogs === 0) {
+        res
+          .status(200)
+          .json({
+            success: true,
+            totalPages: 0,
+            currentPage: page,
+            totalLogs: 0,
+            logs: [],
           });
-          return;
-        }
+        return;
+      }
 
-        res.status(200).json({
-          success: true,
-          logs: logs,
-        });
-      })
-      .catch((err) => {
-        console.error("공지사항 로그 조회 중 오류 발생:", err);
-        res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-        });
+      const [logs] = await connection.query(
+        `
+      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+             u.name AS user_name, u.id AS user_info, l.reason AS restriction_reason, a.name AS admin_name
+      FROM logs l
+      LEFT JOIN notice n ON l.notice_id = n.notice_id
+      LEFT JOIN user u ON n.admin_id = u.user_id
+      LEFT JOIN user a ON l.admin_id = a.user_id
+      WHERE l.log_type = 'notice'
+      ORDER BY l.log_date DESC
+      LIMIT ? OFFSET ?;
+      `,
+        [limit, offset]
+      );
+
+      res.status(200).json({
+        success: true,
+        totalPages: Math.ceil(totalLogs / limit),
+        currentPage: page,
+        totalLogs: totalLogs[0].totalLogs,
+        logs,
       });
+    } catch (err) {
+      console.error("공지사항 로그 조회 중 오류 발생:", err);
+      res.status(500).json({ success: false, message: "서버 오류 발생" });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 공지사항 작성 로그 조회 API 끝
@@ -940,69 +914,59 @@ router.get(
   limiter,
   authenticateToken,
   authorizeAdmin,
-  (req, res) => {
-    db.getConnection()
-      .then((connection) => {
-        return connection
-          .query(
-            `
-        SELECT 
-          l.log_id,
-          l.type AS log_action, -- 로그 액션 (create, edit, delete, book, cancel, end 등)
-          l.log_type,           -- 로그 유형 (book, notice, restriction)
-          DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-          u.name AS user_name,
-          u.id AS user_info,
-          s.name AS seat_name,
-          l.reason AS restriction_reason,
-          a.name AS admin_name
-        FROM 
-          logs l
-        LEFT JOIN 
-          book b ON l.book_id = b.book_id AND l.log_type = 'book'
-        LEFT JOIN 
-          notice n ON l.notice_id = n.notice_id AND l.log_type = 'restriction' AND n.admin_id = l.admin_id
-        LEFT JOIN 
-          user u ON b.user_id = u.user_id
-        LEFT JOIN 
-          seat s ON b.seat_id = s.seat_id
-        LEFT JOIN 
-          user a ON l.admin_id = a.user_id
-        WHERE 
-          (l.type = 'create' OR l.type = 'edit' OR l.type = 'delete') 
-          AND l.log_type = 'restriction' -- 예약제한 관련 로그만 조회
-        ORDER BY 
-          l.log_date DESC
-        `
-          )
-          .finally(() => connection.release()); // 연결 해제 추가
-      })
-      .then((logs) => {
-        // logs가 배열이 아닐 경우 변환
-        if (!Array.isArray(logs)) {
-          logs = Object.values(logs);
-        }
+  async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const offset = (page - 1) * limit;
 
-        if (logs.length === 0) {
-          res.status(404).json({
-            success: false,
-            message: "로그 데이터가 없습니다.",
+    let connection;
+    try {
+      connection = await db.getConnection();
+      const totalLogs = await connection.query(
+        "SELECT COUNT(*) AS totalLogs FROM logs WHERE log_type = 'restriction'"
+      );
+
+      if (totalLogs === 0) {
+        res
+          .status(200)
+          .json({
+            success: true,
+            totalPages: 0,
+            currentPage: page,
+            totalLogs: 0,
+            logs: [],
           });
-          return;
-        }
+        return;
+      }
 
-        res.status(200).json({
-          success: true,
-          logs: logs,
-        });
-      })
-      .catch((err) => {
-        console.error("예약제한 로그 조회 중 오류 발생:", err);
-        res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 로그 데이터를 가져올 수 없습니다.",
-        });
+      const [logs] = await connection.query(
+        `
+      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+             u.name AS user_name, u.id AS user_info, l.reason AS restriction_reason, a.name AS admin_name
+      FROM logs l
+      LEFT JOIN notice n ON l.notice_id = n.notice_id
+      LEFT JOIN user u ON n.admin_id = u.user_id
+      LEFT JOIN user a ON l.admin_id = a.user_id
+      WHERE l.log_type = 'restriction'
+      ORDER BY l.log_date DESC
+      LIMIT ? OFFSET ?;
+      `,
+        [limit, offset]
+      );
+
+      res.status(200).json({
+        success: true,
+        totalPages: Math.ceil(totalLogs / limit),
+        currentPage: page,
+        totalLogs: totalLogs[0].totalLogs,
+        logs,
       });
+    } catch (err) {
+      console.error("예약 제한 로그 조회 중 오류 발생:", err);
+      res.status(500).json({ success: false, message: "서버 오류 발생" });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 예약제한 로그 조회 API 끝
