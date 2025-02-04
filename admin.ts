@@ -20,7 +20,7 @@ const allowedSymbols = /[`'<>-]/; // 금지된 문자
 // Rate Limit 설정
 const limiter = RateLimit({
   windowMs: 15 * 60 * 1000, // 15분
-  max: 100, // 요청 횟수
+  max: 1000, // 요청 횟수
   validate: { xForwardedForHeader: false },
 });
 
@@ -579,7 +579,7 @@ router.delete(
 );
 // 공지사항 삭제 API 끝
 
-// 모든 로그 조회 API 시작
+// 모든 로그 조회 API (검색 필터 포함)
 router.get(
   "/logs/all",
   csrfProtection,
@@ -590,52 +590,61 @@ router.get(
     const page = parseInt(req.query.page as string) || 1;
     const limit = 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search ? `%${req.query.search}%` : "%%"; // 검색어 처리
 
     let connection;
     try {
       connection = await db.getConnection();
 
-      // 전체 로그 개수 조회
+      // 전체 로그 개수 조회 (검색 필터 포함)
       const totalLogs = await connection.query(
-        "SELECT COUNT(*) AS totalLogs FROM logs"
-      );
-
-      if (totalLogs === 0) {
-        res
-          .status(200)
-          .json({
-            success: true,
-            totalPages: 0,
-            currentPage: page,
-            totalLogs: 0,
-            logs: [],
-          });
-        return;
-      }
-
-      // 로그 데이터 조회 (페이징 적용)
-      const [logs] = await connection.query(
         `
-      SELECT 
-        l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-        u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
+      SELECT COUNT(*) AS totalLogs
       FROM logs l
       LEFT JOIN book b ON l.book_id = b.book_id
       LEFT JOIN notice n ON l.notice_id = n.notice_id
       LEFT JOIN user u ON b.user_id = u.user_id
       LEFT JOIN seat s ON b.seat_id = s.seat_id
       LEFT JOIN user a ON l.admin_id = a.user_id
+      WHERE u.id LIKE ? OR u.name LIKE ? OR a.id LIKE ? OR a.name LIKE ?
+      `,
+        [search, search, search, search]
+      );
+
+      if (totalLogs[0].totalLogs === 0) {
+        res.status(200).json({
+          success: true,
+          totalPages: 0,
+          currentPage: page,
+          totalLogs: 0,
+          logs: [],
+        });
+        return;
+      }
+
+      // 로그 데이터 조회 (검색 필터 및 페이징 적용)
+      const logs = await connection.query(
+        `
+      SELECT 
+        l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+        u.name AS user_name, u.id AS user_id, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name, a.id AS admin_id
+      FROM logs l
+      LEFT JOIN book b ON l.book_id = b.book_id
+      LEFT JOIN notice n ON l.notice_id = n.notice_id
+      LEFT JOIN user u ON b.user_id = u.user_id
+      LEFT JOIN seat s ON b.seat_id = s.seat_id
+      LEFT JOIN user a ON l.admin_id = a.user_id
+      WHERE u.id LIKE ? OR u.name LIKE ? OR a.id LIKE ? OR a.name LIKE ?
       ORDER BY l.log_date DESC
       LIMIT ? OFFSET ?;
       `,
-        [limit, offset]
+        [search, search, search, search, limit, offset]
       );
 
       res.status(200).json({
         success: true,
-        totalPages: Math.ceil(totalLogs / limit),
         currentPage: page,
-        totalLogs: totalLogs[0].totalLogs,
+        totalLogs: totalLogs[0].totalLogs.toString(),
         logs,
       });
     } catch (err) {
@@ -648,7 +657,7 @@ router.get(
 );
 // 모든 로그 조회 API 끝
 
-// 예약 로그 조회 API 시작
+// 예약 로그 조회 API (검색 필터 포함 book)
 router.get(
   "/logs/book",
   csrfProtection,
@@ -659,48 +668,58 @@ router.get(
     const page = parseInt(req.query.page as string) || 1;
     const limit = 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search ? `%${req.query.search}%` : "%%";
 
     let connection;
     try {
       connection = await db.getConnection();
+
+      // 전체 예약 로그 개수 조회
       const totalLogs = await connection.query(
-        "SELECT COUNT(*) AS totalLogs FROM logs WHERE log_type = 'book'"
+        `SELECT COUNT(*) AS totalLogs
+        FROM logs l
+       LEFT JOIN book b ON l.book_id = b.book_id
+       LEFT JOIN user u ON b.user_id = u.user_id
+       LEFT JOIN seat s ON b.seat_id = s.seat_id
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'book' AND l.type = 'book' 
+       AND (u.name LIKE ? OR u.id LIKE ? OR a.id LIKE ? OR a.name LIKE ?)
+      `,
+        [search, search, search, search]
       );
 
-      if (totalLogs === 0) {
-        res
-          .status(200)
-          .json({
-            success: true,
-            totalPages: 0,
-            currentPage: page,
-            totalLogs: 0,
-            logs: [],
-          });
+      if (totalLogs[0].totalLogs === 0) {
+        res.status(200).json({
+          success: true,
+          totalPages: 0,
+          currentPage: page,
+          totalLogs: 0,
+          logs: [],
+        });
         return;
       }
 
-      const [logs] = await connection.query(
-        `
-      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-             u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
-      FROM logs l
-      LEFT JOIN book b ON l.book_id = b.book_id
-      LEFT JOIN user u ON b.user_id = u.user_id
-      LEFT JOIN seat s ON b.seat_id = s.seat_id
-      LEFT JOIN user a ON l.admin_id = a.user_id
-      WHERE l.log_type = 'book'
-      ORDER BY l.log_date DESC
-      LIMIT ? OFFSET ?;
+      // 예약 로그 조회 (검색 필터 및 페이징 적용)
+      const logs = await connection.query(
+        `SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+              u.name AS user_name, u.id AS user_id, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name, a.id AS admin_id
+       FROM logs l
+       LEFT JOIN book b ON l.book_id = b.book_id
+       LEFT JOIN user u ON b.user_id = u.user_id
+       LEFT JOIN seat s ON b.seat_id = s.seat_id
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'book' AND l.type = 'book' 
+       AND (u.name LIKE ? OR u.id LIKE ? OR a.id LIKE ? OR a.name LIKE ?)
+       ORDER BY l.log_date DESC
+       LIMIT ? OFFSET ?;
       `,
-        [limit, offset]
+        [search, search, search, search, limit, offset]
       );
 
       res.status(200).json({
         success: true,
-        totalPages: Math.ceil(totalLogs / limit),
         currentPage: page,
-        totalLogs: totalLogs[0].totalLogs,
+        totalLogs: totalLogs[0].totalLogs.toString(),
         logs,
       });
     } catch (err) {
@@ -713,7 +732,7 @@ router.get(
 );
 // 예약 로그 조회 API 끝
 
-// 퇴실 로그 조회 API 시작
+//  퇴실 로그 조회 API (검색 필터 포함 end)
 router.get(
   "/logs/end",
   csrfProtection,
@@ -724,48 +743,58 @@ router.get(
     const page = parseInt(req.query.page as string) || 1;
     const limit = 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search ? `%${req.query.search}%` : "%%";
 
     let connection;
     try {
       connection = await db.getConnection();
+
+      // 전체 퇴실 로그 개수 조회
       const totalLogs = await connection.query(
-        "SELECT COUNT(*) AS totalLogs FROM logs WHERE type = 'end'"
+        `SELECT COUNT(*) AS totalLogs
+        FROM logs l
+       LEFT JOIN book b ON l.book_id = b.book_id
+       LEFT JOIN user u ON b.user_id = u.user_id
+       LEFT JOIN seat s ON b.seat_id = s.seat_id
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'book' AND l.type = 'end' 
+       AND (u.name LIKE ? OR u.id LIKE ? OR a.id LIKE ? OR a.name LIKE ?)
+      `,
+        [search, search, search, search]
       );
 
-      if (totalLogs === 0) {
-        res
-          .status(200)
-          .json({
-            success: true,
-            totalPages: 0,
-            currentPage: page,
-            totalLogs: 0,
-            logs: [],
-          });
+      if (totalLogs[0].totalLogs === 0) {
+        res.status(200).json({
+          success: true,
+          totalPages: 0,
+          currentPage: page,
+          totalLogs: 0,
+          logs: [],
+        });
         return;
       }
 
-      const [logs] = await connection.query(
-        `
-      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-             u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
-      FROM logs l
-      LEFT JOIN book b ON l.book_id = b.book_id
-      LEFT JOIN user u ON b.user_id = u.user_id
-      LEFT JOIN seat s ON b.seat_id = s.seat_id
-      LEFT JOIN user a ON l.admin_id = a.user_id
-      WHERE l.type = 'end'
-      ORDER BY l.log_date DESC
-      LIMIT ? OFFSET ?;
+      // 퇴실 로그 조회 (검색 필터 및 페이징 적용)
+      const logs = await connection.query(
+        `SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+              u.name AS user_name, u.id AS user_id, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name, a.id AS admin_id
+       FROM logs l
+       LEFT JOIN book b ON l.book_id = b.book_id
+       LEFT JOIN user u ON b.user_id = u.user_id
+       LEFT JOIN seat s ON b.seat_id = s.seat_id
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'book' AND l.type = 'end' 
+       AND (u.name LIKE ? OR u.id LIKE ? OR a.id LIKE ? OR a.name LIKE ?)
+       ORDER BY l.log_date DESC
+       LIMIT ? OFFSET ?;
       `,
-        [limit, offset]
+        [search, search, search, search, limit, offset]
       );
 
       res.status(200).json({
         success: true,
-        totalPages: Math.ceil(totalLogs / limit),
         currentPage: page,
-        totalLogs: totalLogs[0].totalLogs,
+        totalLogs: totalLogs[0].totalLogs.toString(),
         logs,
       });
     } catch (err) {
@@ -778,7 +807,7 @@ router.get(
 );
 // 퇴실 로그 조회 API 끝
 
-// 강제 퇴실 로그 조회 API 시작
+//  강제 퇴실 로그 조회 API (검색 필터 포함 cancel)
 router.get(
   "/logs/cancel",
   csrfProtection,
@@ -789,48 +818,58 @@ router.get(
     const page = parseInt(req.query.page as string) || 1;
     const limit = 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search ? `%${req.query.search}%` : "%%";
 
     let connection;
     try {
       connection = await db.getConnection();
+
+      // 전체 강제 퇴실 로그 개수 조회
       const totalLogs = await connection.query(
-        "SELECT COUNT(*) AS totalLogs FROM logs WHERE type = 'cancel'"
+        `SELECT COUNT(*) AS totalLogs
+        FROM logs l
+       LEFT JOIN book b ON l.book_id = b.book_id
+       LEFT JOIN user u ON b.user_id = u.user_id
+       LEFT JOIN seat s ON b.seat_id = s.seat_id
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'book' AND l.type = 'cancel'
+       AND (u.name LIKE ? OR u.id LIKE ? OR a.id LIKE ? OR a.name LIKE ?)
+      `,
+        [search, search, search, search]
       );
 
-      if (totalLogs === 0) {
-        res
-          .status(200)
-          .json({
-            success: true,
-            totalPages: 0,
-            currentPage: page,
-            totalLogs: 0,
-            logs: [],
-          });
+      if (totalLogs[0].totalLogs === 0) {
+        res.status(200).json({
+          success: true,
+          totalPages: 0,
+          currentPage: page,
+          totalLogs: 0,
+          logs: [],
+        });
         return;
       }
 
-      const [logs] = await connection.query(
-        `
-      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-             u.name AS user_name, u.id AS user_info, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name
-      FROM logs l
-      LEFT JOIN book b ON l.book_id = b.book_id
-      LEFT JOIN user u ON b.user_id = u.user_id
-      LEFT JOIN seat s ON b.seat_id = s.seat_id
-      LEFT JOIN user a ON l.admin_id = a.user_id
-      WHERE l.type = 'cancel'
-      ORDER BY l.log_date DESC
-      LIMIT ? OFFSET ?;
+      // 강제 퇴실 로그 조회 (검색 필터 및 페이징 적용)
+      const logs = await connection.query(
+        `SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+              u.name AS user_name, u.id AS user_id, s.name AS seat_name, l.reason AS restriction_reason, a.name AS admin_name, a.id AS admin_id
+       FROM logs l
+       LEFT JOIN book b ON l.book_id = b.book_id
+       LEFT JOIN user u ON b.user_id = u.user_id
+       LEFT JOIN seat s ON b.seat_id = s.seat_id
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'book' AND l.type = 'cancel'
+       AND (u.name LIKE ? OR u.id LIKE ? OR a.id LIKE ? OR a.name LIKE ?)
+       ORDER BY l.log_date DESC
+       LIMIT ? OFFSET ?;
       `,
-        [limit, offset]
+        [search, search, search, search, limit, offset]
       );
 
       res.status(200).json({
         success: true,
-        totalPages: Math.ceil(totalLogs / limit),
         currentPage: page,
-        totalLogs: totalLogs[0].totalLogs,
+        totalLogs: totalLogs[0].totalLogs.toString(),
         logs,
       });
     } catch (err) {
@@ -843,7 +882,7 @@ router.get(
 );
 // 강제 퇴실 로그 조회 API 끝
 
-// 공지사항 로그 조회 API 시작
+// 공지사항 로그 조회 API (검색 필터 포함 'notice')
 router.get(
   "/logs/notice/all",
   csrfProtection,
@@ -854,47 +893,52 @@ router.get(
     const page = parseInt(req.query.page as string) || 1;
     const limit = 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search ? `%${req.query.search}%` : "%%";
 
     let connection;
     try {
       connection = await db.getConnection();
+
+      // 전체 공지사항 로그 개수 조회 (검색 필터 적용)
       const totalLogs = await connection.query(
-        "SELECT COUNT(*) AS totalLogs FROM logs WHERE log_type = 'notice'"
+        `SELECT COUNT(*) AS totalLogs
+        FROM logs l
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'notice'
+       AND (a.id LIKE ? OR a.name LIKE ?)
+      `,
+        [search, search]
       );
 
-      if (totalLogs === 0) {
-        res
-          .status(200)
-          .json({
-            success: true,
-            totalPages: 0,
-            currentPage: page,
-            totalLogs: 0,
-            logs: [],
-          });
+      if (totalLogs[0].totalLogs === 0) {
+        res.status(200).json({
+          success: true,
+          totalPages: 0,
+          currentPage: page,
+          totalLogs: 0,
+          logs: [],
+        });
         return;
       }
 
-      const [logs] = await connection.query(
-        `
-      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-             u.name AS user_name, u.id AS user_info, l.reason AS restriction_reason, a.name AS admin_name
-      FROM logs l
-      LEFT JOIN notice n ON l.notice_id = n.notice_id
-      LEFT JOIN user u ON n.admin_id = u.user_id
-      LEFT JOIN user a ON l.admin_id = a.user_id
-      WHERE l.log_type = 'notice'
-      ORDER BY l.log_date DESC
-      LIMIT ? OFFSET ?;
+      // 공지사항 로그 데이터 조회 (검색 필터 및 페이징 적용)
+      const logs = await connection.query(
+        `SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+              a.id AS admin_id, a.name AS admin_name, l.reason AS restriction_reason
+       FROM logs l
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'notice'
+       AND (a.id LIKE ? OR a.name LIKE ?)
+       ORDER BY l.log_date DESC
+       LIMIT ? OFFSET ?;
       `,
-        [limit, offset]
+        [search, search, limit, offset]
       );
 
       res.status(200).json({
         success: true,
-        totalPages: Math.ceil(totalLogs / limit),
         currentPage: page,
-        totalLogs: totalLogs[0].totalLogs,
+        totalLogs: totalLogs[0].totalLogs.toString(),
         logs,
       });
     } catch (err) {
@@ -907,7 +951,7 @@ router.get(
 );
 // 공지사항 작성 로그 조회 API 끝
 
-// 예약제한 로그 조회 API 시작
+//  예약 제한 로그 조회 API (검색 필터 포함 'restriction')
 router.get(
   "/logs/book_restriction/all",
   csrfProtection,
@@ -918,47 +962,52 @@ router.get(
     const page = parseInt(req.query.page as string) || 1;
     const limit = 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search ? `%${req.query.search}%` : "%%";
 
     let connection;
     try {
       connection = await db.getConnection();
+
+      // 전체 예약 제한 로그 개수 조회 (검색 필터 적용)
       const totalLogs = await connection.query(
-        "SELECT COUNT(*) AS totalLogs FROM logs WHERE log_type = 'restriction'"
+        `SELECT COUNT(*) AS totalLogs
+        FROM logs l
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'restriction'
+       AND (a.id LIKE ? OR a.name LIKE ?)
+      `,
+        [search, search]
       );
 
-      if (totalLogs === 0) {
-        res
-          .status(200)
-          .json({
-            success: true,
-            totalPages: 0,
-            currentPage: page,
-            totalLogs: 0,
-            logs: [],
-          });
+      if (totalLogs[0].totalLogs === 0) {
+        res.status(200).json({
+          success: true,
+          totalPages: 0,
+          currentPage: page,
+          totalLogs: 0,
+          logs: [],
+        });
         return;
       }
 
-      const [logs] = await connection.query(
-        `
-      SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
-             u.name AS user_name, u.id AS user_info, l.reason AS restriction_reason, a.name AS admin_name
-      FROM logs l
-      LEFT JOIN notice n ON l.notice_id = n.notice_id
-      LEFT JOIN user u ON n.admin_id = u.user_id
-      LEFT JOIN user a ON l.admin_id = a.user_id
-      WHERE l.log_type = 'restriction'
-      ORDER BY l.log_date DESC
-      LIMIT ? OFFSET ?;
+      // 예약 제한 로그 데이터 조회 (검색 필터 및 페이징 적용)
+      const logs = await connection.query(
+        `SELECT l.log_id, l.type AS log_action, l.log_type, DATE_FORMAT(l.log_date, '%Y-%m-%d %H:%i') AS log_date,
+              a.id AS admin_id, a.name AS admin_name, l.reason AS restriction_reason
+       FROM logs l
+       LEFT JOIN user a ON l.admin_id = a.user_id
+       WHERE l.log_type = 'restriction'
+       AND (a.id LIKE ? OR a.name LIKE ?)
+       ORDER BY l.log_date DESC
+       LIMIT ? OFFSET ?;
       `,
-        [limit, offset]
+        [search, search, limit, offset]
       );
 
       res.status(200).json({
         success: true,
-        totalPages: Math.ceil(totalLogs / limit),
         currentPage: page,
-        totalLogs: totalLogs[0].totalLogs,
+        totalLogs: totalLogs[0].totalLogs.toString(),
         logs,
       });
     } catch (err) {
@@ -1197,7 +1246,7 @@ router.patch(
 );
 // 사용자 정보 수정 API 끝
 
-// 예약 제한 목록 조회 API 시작
+// 예약 제한 목록 조회 API (검색 필터 추가)
 router.get(
   "/book/restriction",
   csrfProtection,
@@ -1205,14 +1254,22 @@ router.get(
   authenticateToken,
   authorizeAdmin,
   async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1; // 현재 페이지 (기본값: 1)
+    const limit = 10; // 한 페이지에 10개씩 표시
+    const offset = (page - 1) * limit;
+
+    // 검색 필터 적용
+    const search = req.query.search ? `%${req.query.search}%` : "%%";
+
     try {
       const query = `
       SELECT 
           br.restriction_uuid,
           br.notice_id,
           n.title AS notice_title,
+          a.id AS admin_id,
           a.name AS admin_name,
-          br.seat_names, -- 저장된 좌석 이름들
+          br.seat_names,
           DATE_FORMAT(br.restriction_start_date, '%Y-%m-%d %H:%i') AS restriction_start_date,
           DATE_FORMAT(br.restriction_end_date, '%Y-%m-%d %H:%i') AS restriction_end_date
       FROM 
@@ -1221,26 +1278,54 @@ router.get(
           notice n ON br.notice_id = n.notice_id
       LEFT JOIN 
           user a ON br.admin_id = a.user_id
+      WHERE 
+          br.restriction_end_date >= NOW()
+          AND (n.title COLLATE utf8mb4_unicode_ci LIKE ?
+            OR a.id COLLATE utf8mb4_unicode_ci LIKE ?
+            OR a.name COLLATE utf8mb4_unicode_ci LIKE ?)
       ORDER BY 
-          br.restriction_start_date DESC;
+          br.restriction_start_date DESC
+      LIMIT ? OFFSET ?;
     `;
 
       // 쿼리 실행
-      const results = await db.execute(query);
+      const results = await db.execute(query, [
+        search,
+        search,
+        search,
+        limit,
+        offset,
+      ]);
+
+      // 전체 개수 조회 (페이징 처리용)
+      const totalCount = await db.execute(
+        `SELECT COUNT(*) AS total FROM book_restriction br
+       LEFT JOIN notice n ON br.notice_id = n.notice_id
+       LEFT JOIN user a ON br.admin_id = a.user_id
+       WHERE br.restriction_end_date >= NOW()
+       AND (n.title COLLATE utf8mb4_unicode_ci LIKE ? 
+          OR a.name COLLATE utf8mb4_unicode_ci LIKE ? 
+          OR DATE_FORMAT(br.restriction_start_date, '%Y-%m-%d %H:%i') COLLATE utf8mb4_unicode_ci LIKE ? 
+          OR DATE_FORMAT(br.restriction_end_date, '%Y-%m-%d %H:%i') COLLATE utf8mb4_unicode_ci LIKE ?)`,
+        [search, search, search, search]
+      );
 
       // 응답 데이터 포맷
       const formattedResults = results.map((row) => ({
         restriction_uuid: row.restriction_uuid,
         notice_id: row.notice_id,
         notice_title: row.notice_title,
+        admin_id: row.admin_id,
         admin_name: row.admin_name,
-        seat_names: row.seat_names.split(", "), // 좌석 이름 문자열을 배열로 변환
+        seat_names: row.seat_names.split(","), // 좌석 이름 문자열을 배열로 변환
         restriction_start_date: row.restriction_start_date,
         restriction_end_date: row.restriction_end_date,
       }));
 
       res.status(200).json({
         success: true,
+        currentPage: page,
+        totalRestrictions: totalCount[0].total.toString(),
         restrictions: formattedResults,
       });
     } catch (err) {
@@ -1252,7 +1337,7 @@ router.get(
     }
   }
 );
-// 예약 제한 목록 조회 API 끝
+// 예약 제한 목록 조회 끝
 
 // 특정 예약 제한 정보 조회 API 시작
 router.get(
@@ -1355,83 +1440,6 @@ router.post(
 
       // 트랜잭션 시작
       await connection.beginTransaction();
-
-      // 강제 퇴실 처리
-      for (const seat of selectedSeats) {
-        if (seat.state === "book") {
-          const { seat_id: seatId } = seat;
-
-          // 예약 정보 가져오기
-          const reservation = await connection.query(
-            `
-          SELECT b.book_id, b.user_id, u.email, u.name, s.name AS seat_name 
-          FROM book b
-          LEFT JOIN user u ON b.user_id = u.user_id
-          LEFT JOIN seat s ON b.seat_id = s.seat_id
-          WHERE b.seat_id = ? AND b.state = 'book' AND 
-          b.book_date <= ? AND b.book_date >= ?
-          `,
-            [seatId, endDate, startDate]
-          );
-
-          if (reservation.length > 0) {
-            const { book_id, email, name, seat_name } = reservation[0];
-
-            // 예약 상태를 'cancel'로 업데이트
-            await connection.query(
-              `
-            UPDATE book 
-            SET state = 'cancel' 
-            WHERE book_id = ? AND state = 'book'
-            `,
-              [book_id]
-            );
-
-            // 예약 로그 기록
-            await connection.query(
-              `
-            INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id) 
-            VALUES (?, NOW(), 'cancel', 'book', '관리자 설정으로 좌석 예약이 제한되고 있습니다.', ?)
-            `,
-              [book_id, userId]
-            );
-
-            // 이메일 전송
-            const transporter = nodemailer.createTransport({
-              service: "gmail",
-              host: "smtp.gmail.com",
-              port: 587,
-              secure: false,
-              auth: {
-                user: process.env.NODEMAILER_USER,
-                pass: process.env.NODEMAILER_PASS,
-              },
-            });
-
-            const mailOptions = {
-              from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
-              to: email,
-              subject: `[FabLab 예약 시스템] ${seat_name} 강제 퇴실 알림`,
-              html: `
-              <h1>강제 퇴실 알림</h1>
-              <p>${name}님,</p>
-              <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
-              <ul>
-                <li><strong>좌석 번호:</strong> ${seat_name}</li>
-                <li><strong>퇴실 사유:</strong> 관리자 설정으로 좌석 예약이 제한되고 있습니다.</li>
-              </ul>
-              <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
-            `,
-            };
-
-            try {
-              await transporter.sendMail(mailOptions);
-            } catch (emailError) {
-              console.error("이메일 전송 중 오류 발생:", emailError);
-            }
-          }
-        }
-      }
 
       // 예약 제한 데이터 삽입
       const restrictionResult = await connection.query(

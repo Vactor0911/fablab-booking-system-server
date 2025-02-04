@@ -146,6 +146,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
 // ----------------- 스케줄러 등록 -----------------
 
+// ----------------- 사용가능 종료 시간 시 퇴실 스케줄러 -----------------
 // 스케줄러 변수
 let currentScheduler: cron.ScheduledTask | null = null;
 
@@ -173,21 +174,73 @@ export const initializeForceExitScheduler = async () => {
         console.log(`[${KorDate()}] 강제 퇴실 스케줄러 실행`);
 
         // 강제 퇴실 API 호출
-        const response = await axios.post(
-          `${process.env.SERVER_HOST}/force-exit/schedule/endtime`
-        );
+        const response = await axios.post(`${process.env.SERVER_HOST}/force-exit/schedule/endtime`);
         console.log("강제 퇴실 처리 완료:", response.data.message);
       } catch (error) {
         console.error("강제 퇴실 API 호출 중 오류 발생:", error.message);
       }
     });
+
   } catch (error) {
     console.error("강제 퇴실 스케줄러 초기화 중 오류 발생:", error.message);
   }
 };
+// ----------------- 사용가능 종료 시간 시 퇴실 스케줄러 -----------------
 
-// 서버 시작 시 스케줄러 초기화
+
+// ----------------- 예약 제한 스케줄러 -----------------
+// 예약 제한 스케줄러 변수
+let restrictionScheduler: cron.ScheduledTask | null = null;
+
+// 예약 제한 스케줄러 초기화 및 실행
+export const initializeRestrictionScheduler = async () => {
+  try {
+    // 기존 스케줄러가 존재하면 중지
+    if (restrictionScheduler) {
+      restrictionScheduler.stop();
+      console.log("기존 예약 제한 스케줄러가 중지되었습니다.");
+    }
+
+    // 1분마다 실행되는 크론 스케줄러 등록
+    restrictionScheduler = cron.schedule("*/1 * * * *", async () => {
+      try {
+
+        // 현재 제한 시작 시간이 도달한 예약 제한 조회
+        const restrictions = await db.query(
+          `
+          SELECT restriction_id, seat_names 
+          FROM book_restriction
+          WHERE restriction_start_date <= NOW() 
+          AND restriction_end_date >= NOW()
+          `
+        );
+
+        if (restrictions.length > 0) {
+          for (const restriction of restrictions) {
+            // 강제 퇴실 API 호출
+            const response = await axios.post(`${process.env.SERVER_HOST}/force-exit/schedule/restriction`, {
+              restrictionId: restriction.restriction_id,
+              seatNames: restriction.seat_names.split(","),
+            });
+          }
+        }
+      } catch (error) {
+        console.error("예약 제한 강제 퇴실 스케줄러 실행 중 오류 발생:", error.message);
+      }
+    });
+  } catch (error) {
+    console.error("예약 제한 스케줄러 초기화 중 오류 발생:", error.message);
+  }
+};
+// ----------------- 예약 제한 스케줄러 -----------------
+
+
+// 서버 시작 시 스케줄러 실행
+// 사용가능 종료 시간 스케줄러
 initializeForceExitScheduler();
+
+// 예약 제한 스케줄러
+initializeRestrictionScheduler();
 
 // ----------------- 스케줄러 등록 -----------------
 
@@ -1603,15 +1656,13 @@ app.get(
       );
 
       if (totalReservations === 0) {
-        res
-          .status(200)
-          .json({
-            success: true,
-            totalPages: 0,
-            currentPage: page,
-            totalReservations: 0,
-            reservations: [],
-          });
+        res.status(200).json({
+          success: true,
+          totalPages: 0,
+          currentPage: page,
+          totalReservations: 0,
+          reservations: [],
+        });
         return;
       }
 
@@ -1650,12 +1701,10 @@ app.get(
       });
     } catch (err) {
       console.error("예약 정보 조회 중 오류 발생:", err);
-      res
-        .status(500)
-        .json({
-          success: false,
-          message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
-        });
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 예약 정보를 가져오지 못했습니다.",
+      });
     } finally {
       if (connection) connection.release();
     }
@@ -1746,6 +1795,23 @@ app.get(
   }
 );
 // 지금 예약 정보 조회 API 끝
+
+// 공지사항 제목 전체 검색
+app.get("/notice/titles", limiter, async (req: Request, res: Response) => {
+  try {
+    const result = await db.query(`SELECT notice_id, title FROM notice ORDER BY date DESC`);
+    res.status(200).json({
+      success: true,
+      result,
+    });
+  } catch (error) {
+    console.error("공지사항 검색 중 오류 발생:", error);
+    res.status(500).json({
+      success: false,
+      message: "공지사항 검색 중 오류가 발생했습니다.",
+    });
+  }
+});
 
 // 공지사항 제목 검색 + 페이징 API
 app.get("/notice/search", limiter, async (req: Request, res: Response) => {
@@ -2021,3 +2087,114 @@ app.post("/force-exit/schedule/endtime", async (req, res) => {
   }
 });
 // 사용 가능 종료 시간 시 퇴실 API 끝
+
+// 예약 제한으로 인한 강제 퇴실 API 시작
+app.post("/force-exit/schedule/restriction", async (req, res) => {
+  const { restrictionId, seatNames } = req.body;
+
+  if (!restrictionId || !seatNames) {
+    res.status(400).json({
+      success: false,
+      message: "필수 입력값이 누락되었습니다.",
+    });
+    return;
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+
+    // 트랜잭션 시작
+    await connection.beginTransaction();
+
+    for (const seatName of seatNames) {
+      // 예약된 사용자 찾기
+      const reservation = await connection.query(
+        `
+        SELECT b.book_id, b.user_id, u.email, u.name, s.name AS seat_name 
+        FROM book b
+        LEFT JOIN user u ON b.user_id = u.user_id
+        LEFT JOIN seat s ON b.seat_id = s.seat_id
+        WHERE s.name = ? AND b.state = 'book' 
+        `,
+        [seatName]
+      );
+
+      if (reservation.length > 0) {
+        const { book_id, email, name, seat_name } = reservation[0];
+
+        // 예약 상태를 'cancel'로 업데이트
+        await connection.query(
+          `
+          UPDATE book 
+          SET state = 'cancel' 
+          WHERE book_id = ? AND state = 'book'
+          `,
+          [book_id]
+        );
+
+        // 예약 로그 기록
+        await connection.query(
+          `
+          INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+          VALUES (?, NOW(), 'cancel', 'book', '예약 제한으로 인한 강제 퇴실')
+          `,
+          [book_id]
+        );
+
+        // 이메일 전송
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          host: "smtp.gmail.com",
+          port: 587,
+          secure: false,
+          auth: {
+            user: process.env.NODEMAILER_USER,
+            pass: process.env.NODEMAILER_PASS,
+          },
+        });
+
+        const mailOptions = {
+          from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+          to: email,
+          subject: `[FabLab 예약 시스템] ${seat_name} 강제 퇴실 알림`,
+          html: `
+            <h1>강제 퇴실 알림</h1>
+            <p>${name}님,</p>
+            <p>다음 좌석에 대한 예약이 예약 제한으로 인해 강제 퇴실 처리되었습니다.</p>
+            <ul>
+              <li><strong>좌석 번호:</strong> ${seat_name}</li>
+              <li><strong>퇴실 사유:</strong> 예약 제한으로 인해 자동 퇴실</li>
+            </ul>
+            <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
+          `,
+        };
+
+        try {
+          await transporter.sendMail(mailOptions);
+        } catch (emailError) {
+          console.error("이메일 전송 중 오류 발생:", emailError);
+        }
+      }
+    }
+
+    // 트랜잭션 커밋
+    await connection.commit();
+    connection.release();
+
+    res.status(200).json({
+      success: true,
+      message: "예약 제한으로 인한 강제 퇴실이 완료되었습니다.",
+    });
+  } catch (error) {
+    console.error("예약 제한 강제 퇴실 중 오류 발생:", error);
+
+    if (connection) await connection.rollback();
+
+    res.status(500).json({
+      success: false,
+      message: "강제 퇴실 중 오류가 발생했습니다.",
+    });
+  }
+});
+// 예약 제한으로 인한 강제 퇴실 API
