@@ -174,19 +174,19 @@ export const initializeForceExitScheduler = async () => {
         console.log(`[${KorDate()}] 강제 퇴실 스케줄러 실행`);
 
         // 강제 퇴실 API 호출
-        const response = await axios.post(`${process.env.SERVER_HOST}/force-exit/schedule/endtime`);
+        const response = await axios.post(
+          `${process.env.SERVER_HOST}/force-exit/schedule/endtime`
+        );
         console.log("강제 퇴실 처리 완료:", response.data.message);
       } catch (error) {
         console.error("강제 퇴실 API 호출 중 오류 발생:", error.message);
       }
     });
-
   } catch (error) {
     console.error("강제 퇴실 스케줄러 초기화 중 오류 발생:", error.message);
   }
 };
 // ----------------- 사용가능 종료 시간 시 퇴실 스케줄러 -----------------
-
 
 // ----------------- 예약 제한 스케줄러 -----------------
 // 예약 제한 스케줄러 변수
@@ -204,7 +204,6 @@ export const initializeRestrictionScheduler = async () => {
     // 1분마다 실행되는 크론 스케줄러 등록
     restrictionScheduler = cron.schedule("*/1 * * * *", async () => {
       try {
-
         // 현재 제한 시작 시간이 도달한 예약 제한 조회
         const restrictions = await db.query(
           `
@@ -218,14 +217,20 @@ export const initializeRestrictionScheduler = async () => {
         if (restrictions.length > 0) {
           for (const restriction of restrictions) {
             // 강제 퇴실 API 호출
-            const response = await axios.post(`${process.env.SERVER_HOST}/force-exit/schedule/restriction`, {
-              restrictionId: restriction.restriction_id,
-              seatNames: restriction.seat_names.split(","),
-            });
+            const response = await axios.post(
+              `${process.env.SERVER_HOST}/force-exit/schedule/restriction`,
+              {
+                restrictionId: restriction.restriction_id,
+                seatNames: restriction.seat_names.split(","),
+              }
+            );
           }
         }
       } catch (error) {
-        console.error("예약 제한 강제 퇴실 스케줄러 실행 중 오류 발생:", error.message);
+        console.error(
+          "예약 제한 강제 퇴실 스케줄러 실행 중 오류 발생:",
+          error.message
+        );
       }
     });
   } catch (error) {
@@ -233,7 +238,6 @@ export const initializeRestrictionScheduler = async () => {
   }
 };
 // ----------------- 예약 제한 스케줄러 -----------------
-
 
 // 서버 시작 시 스케줄러 실행
 // 사용가능 종료 시간 스케줄러
@@ -1799,7 +1803,9 @@ app.get(
 // 공지사항 제목 전체 검색
 app.get("/notice/titles", limiter, async (req: Request, res: Response) => {
   try {
-    const result = await db.query(`SELECT notice_id, title FROM notice ORDER BY date DESC`);
+    const result = await db.query(
+      `SELECT notice_id, title FROM notice ORDER BY date DESC`
+    );
     res.status(200).json({
       success: true,
       result,

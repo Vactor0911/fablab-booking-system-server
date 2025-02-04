@@ -306,7 +306,7 @@ router.post(
         <p>${name}님,</p>
         <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
         <ul>
-          <li><strong>좌석 번호:</strong> ${seatName}</li>
+          <li><strong>좌석 번호:</strong> ${he.encode(seatName)}</li>
           <li><strong>퇴실 사유:</strong> ${he.encode(exitReason)}</li>
         </ul>
         <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
