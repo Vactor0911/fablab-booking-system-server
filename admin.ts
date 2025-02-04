@@ -1027,58 +1027,101 @@ router.get(
   limiter,
   authenticateToken,
   authorizeAdmin,
-  (req, res) => {
-    db.getConnection()
-      .then((connection) => {
-        return connection
-          .query(
-            `
-        SELECT 
-          u.user_id,
-          u.name,
-          u.id,
-          u.email,
-          u.permission,
-          u.state,
-          DATE_FORMAT(MAX(b.book_date), '%Y-%m-%d %H:%i') AS last_reservation -- 마지막 예약 일시를 가져오기 위해 MAX 사용
-        FROM 
-          user u
-        LEFT JOIN 
-          book b ON u.user_id = b.user_id
-        GROUP BY 
-          u.user_id, u.name, u.id, u.email, u.permission, u.state
-        ORDER BY 
-          u.permission ASC, u.state ASC, u.name ASC
+  async (req, res) => {
+    const page = parseInt(req.query.page as string) || 1; // 기본값 1페이지
+    const limit = 10; // 페이지당 10개
+    const offset = (page - 1) * limit;
+    const search = req.query.search ? `%${req.query.search}%` : "%%"; // 검색어 처리 (LIKE 검색)
+
+    let connection;
+    try {
+      connection = await db.getConnection();
+
+      // 전체 사용자 수 조회 (검색어 적용)
+      const totalUsersResult = await connection.query(
         `
-          )
-          .finally(() => connection.release()); // 연결 해제 추가
-      })
-      .then((users) => {
-        // users가 배열이 아닐 경우 변환
-        if (!Array.isArray(users)) {
-          users = Object.values(users);
-        }
+      SELECT COUNT(*) AS totalUsers FROM user;
+      `
+      );
+      const totalUsers = totalUsersResult[0]?.totalUsers || 0;
 
-        if (users.length === 0) {
-          res.status(404).json({
-            success: false,
-            message: "사용자 데이터가 없습니다.",
-          });
-          return;
-        }
-
+      if (totalUsers === 0) {
         res.status(200).json({
           success: true,
-          users: users,
+          totalPages: 0,
+          currentPage: page,
+          totalUsers: 0,
+          users: [],
         });
-      })
-      .catch((err) => {
-        console.error("사용자 목록 조회 중 오류 발생:", err);
-        res.status(500).json({
-          success: false,
-          message: "서버 오류로 인해 사용자 데이터를 가져올 수 없습니다.",
-        });
+        return;
+      }
+
+      // 전체 관리자 수 조회 (검색어 적용)
+      const totalAdminsResult = await connection.query(
+        `
+      SELECT COUNT(*) AS totalAdmins FROM user
+      WHERE permission = 'admin' OR permission = 'superadmin';
+      `
+      );
+      const totalAdmins = totalAdminsResult[0]?.totalAdmins || 0;
+
+      // 사용자 수 조회 (검색 적용)
+      const usersCountResult = await connection.query(
+        `
+      SELECT 
+        COUNT(*) AS usersCount
+      FROM 
+        user u
+      WHERE 
+        u.name LIKE ? OR u.id LIKE ? -- 검색 필터
+      `,
+        [search, search]
+      );
+      const usersCount = usersCountResult[0]?.usersCount || 0;
+
+      // 사용자 목록 조회 (검색 + 페이징 적용)
+      const users = await connection.query(
+        `
+      SELECT 
+        u.user_id,
+        u.name,
+        u.id,
+        u.email,
+        u.permission,
+        u.state,
+        DATE_FORMAT(MAX(b.book_date), '%Y-%m-%d %H:%i') AS last_reservation
+      FROM 
+        user u
+      LEFT JOIN 
+        book b ON u.user_id = b.user_id
+      WHERE 
+        u.name LIKE ? OR u.id LIKE ? -- 검색 필터
+      GROUP BY 
+        u.user_id, u.name, u.id, u.email, u.permission, u.state
+      ORDER BY 
+        u.user_id DESC -- 최신 사용자 기준 정렬
+      LIMIT ? OFFSET ?;
+      `,
+        [search, search, limit, offset]
+      );
+
+      res.status(200).json({
+        success: true,
+        currentPage: page,
+        totalUsers,
+        totalAdmins,
+        users,
+        usersCount,
       });
+    } catch (err) {
+      console.error("사용자 목록 조회 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 사용자 데이터를 가져올 수 없습니다.",
+      });
+    } finally {
+      if (connection) connection.release();
+    }
   }
 );
 // 사용자 목록 조회 API 끝
@@ -1749,45 +1792,105 @@ router.get(
 // 기본 설정 조회 API 끝
 
 // 기본 설정 수정 API 시작
-router.patch(
-  "/default-settings",
-  csrfProtection,
-  limiter,
-  authenticateToken,
-  authorizeAdmin,
-  async (req, res) => {
-    const { available_start_time, available_end_time, basic_manners } =
-      req.body;
+router.patch("/default-settings", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
+  const { available_start_time, available_end_time, basic_manners, userId } = req.body;
 
-    if (!available_start_time || !available_end_time || !basic_manners) {
-      res
-        .status(400)
-        .json({ success: false, message: "필수 입력값이 누락되었습니다." });
-    }
+  if (!available_start_time || !available_end_time || !basic_manners) {
+    res.status(400).json({ success: false, message: "필수 입력값이 누락되었습니다." });
+    return;
+  }
 
-    if (available_start_time > available_end_time) {
-      res.status(400).json({
-        success: false,
-        message: "예약 가능 시간이 올바르지 않습니다.",
-      });
-    }
+  if (available_start_time > available_end_time) {
+    res.status(400).json({ success: false, message: "예약 가능 시간이 올바르지 않습니다." });
+    return;
+  }
 
-    // 특수문자 검증 (허용되지 않는 특수문자 체크)
-    if (
-      !validator.isLength(basic_manners, { max: 200 }) ||
-      /[`"<>-]/.test(basic_manners)
-    ) {
-      res.status(400).json({
-        success: false,
-        message:
-          "퇴실 사유는 최대 200자의 텍스트이며, <, >, `, - 문자는 허용되지 않습니다.",
-      });
-      return;
-    }
+  // 특수문자 검증 (허용되지 않는 특수문자 체크)
+  if (!validator.isLength(basic_manners, { max: 200 }) || /[`"<>-]/.test(basic_manners)) {
+    res.status(400).json({
+      success: false,
+      message: "퇴실 사유는 최대 200자의 문자열이며, <, >, `, - 기호는 허용되지 않습니다.",
+    });
+    return;
+  }
 
-    try {
-      const result = await db.query(
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // **사용 가능 시작 시간 이전에 예약된 사용자 조회 (강제 퇴실 대상)**
+    const reservations = await connection.query(
+      `
+      SELECT b.book_id, b.user_id, u.email, u.name, s.name AS seat_name 
+      FROM book b
+      LEFT JOIN user u ON b.user_id = u.user_id
+      LEFT JOIN seat s ON b.seat_id = s.seat_id
+      WHERE b.state = 'book' 
+      AND TIME(b.book_date) < ?
+      `,
+      [available_start_time]
+    );
+    
+    console.log(reservations);
+
+    // **예약된 사용자 강제 퇴실 처리**
+    for (const reservation of reservations) {
+      const { book_id, email, name, seat_name } = reservation;
+
+      // 예약 상태를 'cancel'로 업데이트
+      await connection.query(
+        `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+        [book_id]
+      );
+
+      // 예약 로그 기록
+      await connection.query(
         `
+        INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id) 
+        VALUES (?, NOW(), 'cancel', 'book', '예약 가능 시간 변경으로 인한 강제 퇴실', ?)
+        `,
+        [book_id, userId]
+      );
+
+      // 이메일 전송
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        auth: {
+          user: process.env.NODEMAILER_USER,
+          pass: process.env.NODEMAILER_PASS,
+        },
+      });
+
+      const mailOptions = {
+        from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+        to: email,
+        subject: `[FabLab 예약 시스템] ${seat_name} 강제 퇴실 알림`,
+        html: `
+          <h1>강제 퇴실 알림</h1>
+          <p>${name}님,</p>
+          <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
+          <ul>
+            <li><strong>좌석 번호:</strong> ${seat_name}</li>
+            <li><strong>퇴실 사유:</strong> 예약 가능 시간 변경으로 인한 강제 퇴실</li>
+          </ul>
+          <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
+        `,
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+      } catch (emailError) {
+        console.error("이메일 전송 중 오류 발생:", emailError);
+      }
+    }
+
+    // **기본 설정 업데이트**
+    const result = await connection.query(
+      `
       UPDATE default_settings
       SET 
         available_start_time = ?, 
@@ -1795,32 +1898,32 @@ router.patch(
         basic_manners = ?
       WHERE setting_id = 1
       `,
-        [available_start_time, available_end_time, basic_manners]
-      );
+      [available_start_time, available_end_time, basic_manners]
+    );
 
-      if (result.affectedRows === 0) {
-        res.status(404).json({
-          success: false,
-          message: "업데이트할 설정 정보를 찾을 수 없습니다.",
-        });
-      }
-
-      // 스케줄러 재등록
-      await initializeForceExitScheduler();
-
-      res.status(200).json({
-        success: true,
-        message: "설정 정보가 성공적으로 업데이트되었습니다.",
-      });
-    } catch (error) {
-      console.error("기본 설정 업데이트 중 오류 발생:", error);
-      res.status(500).json({
-        success: false,
-        message: "기본 설정 업데이트 중 오류가 발생했습니다.",
-      });
+    if (result.affectedRows === 0) {
+      res.status(404).json({ success: false, message: "업데이트할 설정 정보를 찾을 수 없습니다." });
+      return;
     }
+
+    // **스케줄러 재등록**
+    await initializeForceExitScheduler();
+
+    // **트랜잭션 커밋**
+    await connection.commit();
+    connection.release();
+
+    res.status(200).json({
+      success: true,
+      message: "설정 정보가 성공적으로 업데이트되었으며, 강제 퇴실이 완료되었습니다.",
+    });
+
+  } catch (error) {
+    console.error("기본 설정 업데이트 중 오류 발생:", error);
+    if (connection) await connection.rollback();
+    res.status(500).json({ success: false, message: "기본 설정 업데이트 중 오류가 발생했습니다." });
   }
-);
+});
 // 기본 설정 수정 API 끝
 
 // 좌석 정보 수정 API 시작 - 좌석 관리
@@ -1838,7 +1941,7 @@ router.patch(
     let { selectedSeats, warning, pcUsage } = req.body;
     try {
       // JSON으로 전송된 selectedSeats를 파싱
-      selectedSeats = JSON.parse(selectedSeats);
+      selectedSeats = selectedSeats.split(",");
 
       // 유효성 검사
       if (
@@ -1859,7 +1962,7 @@ router.patch(
         res.status(400).json({
           success: false,
           message:
-            "주의사항은 최대 100자의 텍스트이며, <, >, `, -, ' 문자는 허용되지 않습니다.",
+            "주의사항은 최대 100자의 문자열이며, <, >, `, -, ' 기호는 허용되지 않습니다.",
         });
         return;
       }
@@ -1873,10 +1976,6 @@ router.patch(
         await connection.beginTransaction();
 
         for (const seat of selectedSeats) {
-          if (!seat.seat_id || !seat.seat_name) {
-            throw new Error("유효하지 않은 좌석 정보가 포함되어 있습니다.");
-          }
-
           await connection.query(
             `
           UPDATE seat
@@ -1884,9 +1983,9 @@ router.patch(
             warning = ?, 
             pc_support = ?, 
             image_path = ?
-          WHERE seat_id = ?
+          WHERE name = ?
           `,
-            [warning || null, pcUsage || "none", imagePath, seat.seat_id]
+            [warning || null, pcUsage || "none", imagePath, seat]
           );
         }
 
