@@ -635,6 +635,9 @@ app.post(
             success: true,
             message: "Access Token이 갱신되었습니다.",
             accessToken: newAccessToken,
+            userId: decoded.userId,
+            name: decoded.name,
+            permission: decoded.permission
           });
         } catch (err) {
           // Refresh Token 만료 시 DB에서 삭제
