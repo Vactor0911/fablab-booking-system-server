@@ -14,6 +14,7 @@ dist-ssr
 
 #깃허브에 올리지 않아야 하는 값 환경변수
 .env
+image/*
 
 # Editor directories and files
 .vscode/*
