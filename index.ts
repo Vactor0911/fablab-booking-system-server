@@ -881,7 +881,7 @@ app.delete(
 // 좌석 퇴실 API 끝
 
 // 예약 좌석 데이터 제공 API 시작
-app.get("/seats", limiter, authenticateToken, async (req, res) => {
+app.get("/seats", limiter, async (req, res) => {
   try {
     const rows = await db.query(`
       SELECT 
@@ -905,7 +905,7 @@ app.get("/seats", limiter, authenticateToken, async (req, res) => {
 // 좌석 데이터 제공 API 끝
 
 // 특정 좌석 정보 조회 API 시작
-app.get("/seats/:seatName", limiter, authenticateToken, async (req, res) => {
+app.get("/seats/:seatName", limiter, async (req, res) => {
   const { seatName } = req.params;
 
   try {
@@ -2207,3 +2207,46 @@ app.post("/force-exit/schedule/restriction", async (req, res) => {
   }
 });
 // 예약 제한으로 인한 강제 퇴실 API
+
+// 현재 예약 제한 좌석 조회 API
+app.get("/book/restriction/seats",limiter, async (req, res) => {
+  
+  try {
+    const rows = await db.query(
+      `
+      SELECT seat_names 
+      FROM book_restriction 
+      WHERE restriction_start_date <= now() 
+      AND restriction_end_date >= now()
+      `,
+    );
+
+    if (!rows.length) {
+      res.status(200).json({
+        success: true,
+        message: "현재 예약 제한이 적용된 좌석이 없습니다.",
+        restrictedSeats: [],
+      });
+      return;
+    }
+
+    // seat_names 값을 모두 합쳐서 중복 제거 후 반환
+    const restrictedSeats = Array.from(
+      new Set(rows.map((row: any) => row.seat_names.split(",")).flat())
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "현재 예약 제한이 적용된 좌석 목록",
+      restrictedSeats,
+    });
+
+  } catch (error) {
+    console.error("예약 제한 좌석 조회 중 오류 발생:", error);
+    res.status(500).json({
+      success: false,
+      message: "예약 제한 좌석 조회 중 서버 오류가 발생했습니다.",
+    });
+  }
+});
+// 현재 예약 제한 좌석 조회 API 끝
