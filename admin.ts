@@ -1906,12 +1906,12 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
       return;
     }
 
-    // **스케줄러 재등록**
-    await initializeForceExitScheduler();
-
     // **트랜잭션 커밋**
     await connection.commit();
     connection.release();
+
+    // **스케줄러 재등록**
+    await initializeForceExitScheduler();
 
     res.status(200).json({
       success: true,
