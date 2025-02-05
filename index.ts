@@ -161,10 +161,11 @@ export const initializeForceExitScheduler = async () => {
     const availableEndTime = defaultSettings?.available_end_time || "23:59:59";
     const [hour, minute] = availableEndTime.split(":");
 
-    // 기존 스케줄러 중지
+    // 기존 스케줄러 중지 및 초기화
     if (currentScheduler) {
       currentScheduler.stop();
-      console.log("기존 스케줄러가 중지되었습니다.");
+      currentScheduler = null; // 완전 초기화
+      console.log("기존 강제 퇴실 스케줄러 중지 및 초기화 완료.");
     }
 
     // 새로운 스케줄러 등록
