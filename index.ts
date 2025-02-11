@@ -2210,7 +2210,7 @@ app.post("/force-exit/schedule/restriction", async (req, res) => {
 // 예약 제한으로 인한 강제 퇴실 API
 
 // 현재 예약 제한 좌석 조회 API
-app.get("/book/restriction/seats",limiter, async (req, res) => {
+app.get("/book/restriction/seats", limiter, async (req, res) => {
   
   try {
     const rows = await db.query(
@@ -2255,7 +2255,7 @@ app.get("/book/restriction/seats",limiter, async (req, res) => {
 
 
 // 회원 탈퇴 API 시작
-app.delete("/users/withdrawal", csrfProtection, authenticateToken, limiter, async (req, res) => {
+app.delete("/users/withdrawal", limiter, csrfProtection, authenticateToken, async (req, res) => {
   const userId = req.user?.userId; // 인증된 사용자 ID
 
   if (!userId) {
