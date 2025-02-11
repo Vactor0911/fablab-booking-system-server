@@ -13,8 +13,19 @@ import bcrypt from "bcrypt"; // 비밀번호 해싱 라이브러리
 import multer from "multer"; // 파일 업로드 라이브러리
 import path from "path"; // 경로 라이브러리
 import fs from "fs"; // 파일 시스템 라이브러리
+import sanitizeHtml from "sanitize-html"; // HTML 필터링 라이브러리
+
+// 허용할 태그 및 속성 정의
+const sanitizeOptions = {
+  allowedTags: ["p", "b", "i", "strong", "em", "ul", "ol", "li", "a", "br"], // 허용할 태그
+  allowedAttributes: {
+    a: ["href", "target"], // a 태그의 href, target 속성만 허용
+  },
+  // allowedFrameHostnames: ['www.youtube.com'] // iframe 허용하되 유튜브 사이트만 허용
+};
 
 const allowedSymbolsForPassword = /^[a-zA-Z0-9!@#$%^&*?]*$/; // 허용된 문자들
+const allowedSymbolsForNotice = /[`]/; // 금지된 문자 (백틱(`)만 제한)
 const allowedSymbols = /[`'<>-]/; // 금지된 문자
 
 // Rate Limit 설정
@@ -340,6 +351,7 @@ router.post(
 );
 // 강제 퇴실 API 끝
 
+
 // 공지사항 수정 API 시작
 router.patch(
   "/notice/:uuid",
@@ -373,13 +385,17 @@ router.patch(
       });
       return;
     }
-    if (allowedSymbols.test(title) || allowedSymbols.test(content)) {
+    if (allowedSymbolsForNotice.test(title) || allowedSymbolsForNotice.test(content)) {
       res.status(400).json({
         success: false,
         message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
       });
       return;
     }
+
+    // **XSS 공격 방지를 위해 HTML 정리**
+    const sanitizedContent = sanitizeHtml(content, sanitizeOptions);
+    const sanitizedTitle = sanitizeHtml(title, sanitizeOptions);
 
     let connection: any;
     try {
@@ -393,7 +409,7 @@ router.patch(
       SET title = ?, content = ?, admin_id = ?, date = NOW()
       WHERE notice_id = ?
       `,
-        [title.trim(), content.trim(), userId, noticeId] // 인코딩 제거
+        [sanitizedTitle, sanitizedContent, userId, noticeId] 
       );
 
       // 로그 기록 추가
@@ -424,6 +440,7 @@ router.patch(
   }
 );
 // 공지사항 수정 API 끝
+
 
 // 공지사항 생성, 공지사항 작성 API 시작
 router.post(
@@ -458,13 +475,17 @@ router.post(
       });
       return;
     }
-    if (allowedSymbols.test(title) || allowedSymbols.test(content)) {
+    if (allowedSymbolsForNotice.test(title) || allowedSymbolsForNotice.test(content)) {
       res.status(400).json({
         success: false,
         message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
       });
       return;
     }
+
+    // **XSS 공격 방지를 위해 HTML 정리**
+    const sanitizedContent = sanitizeHtml(content, sanitizeOptions);
+    const sanitizedTitle = sanitizeHtml(title, sanitizeOptions);
 
     let connection: any;
     try {
@@ -477,7 +498,7 @@ router.post(
       INSERT INTO notice (title, content, admin_id, date)
       VALUES (?, ?, ?, NOW())
       `,
-        [title.trim(), content.trim(), userId] // 인코딩 제거
+        [sanitizedTitle, sanitizedContent, userId] // 인코딩 제거
       );
 
       const noticeId = result.insertId; // 생성된 공지사항 ID 가져오기
@@ -511,6 +532,7 @@ router.post(
   }
 );
 // 공지사항 생성 API 끝
+
 
 // 공지사항 삭제 API 시작
 router.delete(
@@ -1194,7 +1216,7 @@ router.patch(
       // 요청자의 권한 확인
       const requestingUser = req.user; // 요청자의 정보
       const [targetUserResult] = await connection.query(
-        `SELECT permission FROM user WHERE user_id = ?`,
+        `SELECT permission, state FROM user WHERE user_id = ?`,
         [userId]
       );
 
@@ -1235,8 +1257,35 @@ router.patch(
         queryParams.push(email.trim());
       }
 
-      // 상태(state) 수정 (admin, superadmin 모두 가능)
-      if (state) {
+      // 사용자 상태(state) 수정 (admin, superadmin 모두 가능)
+      const targetCurrentState = targetUserResult.state;
+
+      // 비활성화 시 현재 예약 확인 및 강제 퇴실
+      if (state === "inactive" && targetCurrentState !== "inactive") {
+        // 현재 예약 확인
+        const reservations = await connection.query(
+          `SELECT book_id FROM book WHERE user_id = ? AND state = 'book'`,
+          [userId]
+        );
+
+        if (reservations.length > 0) {
+          // 강제 퇴실 처리
+          for (const reservation of reservations) {
+            await connection.query(
+              `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+              [reservation.book_id]
+            );
+
+            // 로그 기록
+            await connection.query(
+              `INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+              VALUES (?, NOW(), 'cancel', 'book', '사용자 비활성화로 인한 강제 퇴실')`,
+              [reservation.book_id]
+            );
+          }
+        }
+
+        // 상태 변경
         fieldsToUpdate.push("state = ?");
         queryParams.push(state);
       }
@@ -1792,36 +1841,54 @@ router.get(
 // 기본 설정 조회 API 끝
 
 // 기본 설정 수정 API 시작
-router.patch("/default-settings", csrfProtection, limiter, authenticateToken, authorizeAdmin, async (req, res) => {
-  const { available_start_time, available_end_time, basic_manners, userId } = req.body;
+router.patch(
+  "/default-settings",
+  csrfProtection,
+  limiter,
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { available_start_time, available_end_time, basic_manners, userId } =
+      req.body;
 
-  if (!available_start_time || !available_end_time || !basic_manners) {
-    res.status(400).json({ success: false, message: "필수 입력값이 누락되었습니다." });
-    return;
-  }
+    if (!available_start_time || !available_end_time || !basic_manners) {
+      res
+        .status(400)
+        .json({ success: false, message: "필수 입력값이 누락되었습니다." });
+      return;
+    }
 
-  if (available_start_time > available_end_time) {
-    res.status(400).json({ success: false, message: "예약 가능 시간이 올바르지 않습니다." });
-    return;
-  }
+    if (available_start_time > available_end_time) {
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: "예약 가능 시간이 올바르지 않습니다.",
+        });
+      return;
+    }
 
-  // 특수문자 검증 (허용되지 않는 특수문자 체크)
-  if (!validator.isLength(basic_manners, { max: 200 }) || /[`"<>-]/.test(basic_manners)) {
-    res.status(400).json({
-      success: false,
-      message: "퇴실 사유는 최대 200자의 문자열이며, <, >, `, - 기호는 허용되지 않습니다.",
-    });
-    return;
-  }
+    // 특수문자 검증 (허용되지 않는 특수문자 체크)
+    if (
+      !validator.isLength(basic_manners, { max: 200 }) ||
+      /[`"<>-]/.test(basic_manners)
+    ) {
+      res.status(400).json({
+        success: false,
+        message:
+          "퇴실 사유는 최대 200자의 문자열이며, <, >, `, - 기호는 허용되지 않습니다.",
+      });
+      return;
+    }
 
-  let connection;
-  try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    let connection;
+    try {
+      connection = await db.getConnection();
+      await connection.beginTransaction();
 
-    // **사용 가능 시작 시간 이전에 예약된 사용자 조회 (강제 퇴실 대상)**
-    const reservations = await connection.query(
-      `
+      // **사용 가능 시작 시간 이전에 예약된 사용자 조회 (강제 퇴실 대상)**
+      const reservations = await connection.query(
+        `
       SELECT b.book_id, b.user_id, u.email, u.name, s.name AS seat_name 
       FROM book b
       LEFT JOIN user u ON b.user_id = u.user_id
@@ -1829,47 +1896,47 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
       WHERE b.state = 'book' 
       AND TIME(b.book_date) < ?
       `,
-      [available_start_time]
-    );
-    
-    console.log(reservations);
-
-    // **예약된 사용자 강제 퇴실 처리**
-    for (const reservation of reservations) {
-      const { book_id, email, name, seat_name } = reservation;
-
-      // 예약 상태를 'cancel'로 업데이트
-      await connection.query(
-        `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
-        [book_id]
+        [available_start_time]
       );
 
-      // 예약 로그 기록
-      await connection.query(
-        `
+      console.log(reservations);
+
+      // **예약된 사용자 강제 퇴실 처리**
+      for (const reservation of reservations) {
+        const { book_id, email, name, seat_name } = reservation;
+
+        // 예약 상태를 'cancel'로 업데이트
+        await connection.query(
+          `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+          [book_id]
+        );
+
+        // 예약 로그 기록
+        await connection.query(
+          `
         INSERT INTO logs (book_id, log_date, type, log_type, reason, admin_id) 
         VALUES (?, NOW(), 'cancel', 'book', '예약 가능 시간 변경으로 인한 강제 퇴실', ?)
         `,
-        [book_id, userId]
-      );
+          [book_id, userId]
+        );
 
-      // 이메일 전송
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        host: "smtp.gmail.com",
-        port: 587,
-        secure: false,
-        auth: {
-          user: process.env.NODEMAILER_USER,
-          pass: process.env.NODEMAILER_PASS,
-        },
-      });
+        // 이메일 전송
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          host: "smtp.gmail.com",
+          port: 587,
+          secure: false,
+          auth: {
+            user: process.env.NODEMAILER_USER,
+            pass: process.env.NODEMAILER_PASS,
+          },
+        });
 
-      const mailOptions = {
-        from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
-        to: email,
-        subject: `[FabLab 예약 시스템] ${seat_name} 강제 퇴실 알림`,
-        html: `
+        const mailOptions = {
+          from: `"FabLab 예약 시스템" <${process.env.NODEMAILER_USER}>`,
+          to: email,
+          subject: `[FabLab 예약 시스템] ${seat_name} 강제 퇴실 알림`,
+          html: `
           <h1>강제 퇴실 알림</h1>
           <p>${name}님,</p>
           <p>다음 좌석에 대한 예약이 관리자에 의해 강제 퇴실 처리되었습니다.</p>
@@ -1879,18 +1946,18 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
           </ul>
           <p>문의사항이 있으시면 관리자에게 문의하세요.</p>
         `,
-      };
+        };
 
-      try {
-        await transporter.sendMail(mailOptions);
-      } catch (emailError) {
-        console.error("이메일 전송 중 오류 발생:", emailError);
+        try {
+          await transporter.sendMail(mailOptions);
+        } catch (emailError) {
+          console.error("이메일 전송 중 오류 발생:", emailError);
+        }
       }
-    }
 
-    // **기본 설정 업데이트**
-    const result = await connection.query(
-      `
+      // **기본 설정 업데이트**
+      const result = await connection.query(
+        `
       UPDATE default_settings
       SET 
         available_start_time = ?, 
@@ -1898,32 +1965,43 @@ router.patch("/default-settings", csrfProtection, limiter, authenticateToken, au
         basic_manners = ?
       WHERE setting_id = 1
       `,
-      [available_start_time, available_end_time, basic_manners]
-    );
+        [available_start_time, available_end_time, basic_manners]
+      );
 
-    if (result.affectedRows === 0) {
-      res.status(404).json({ success: false, message: "업데이트할 설정 정보를 찾을 수 없습니다." });
-      return;
+      if (result.affectedRows === 0) {
+        res
+          .status(404)
+          .json({
+            success: false,
+            message: "업데이트할 설정 정보를 찾을 수 없습니다.",
+          });
+        return;
+      }
+
+      // **트랜잭션 커밋**
+      await connection.commit();
+      connection.release();
+
+      // **스케줄러 재등록**
+      await initializeForceExitScheduler();
+
+      res.status(200).json({
+        success: true,
+        message:
+          "설정 정보가 성공적으로 업데이트되었으며, 강제 퇴실이 완료되었습니다.",
+      });
+    } catch (error) {
+      console.error("기본 설정 업데이트 중 오류 발생:", error);
+      if (connection) await connection.rollback();
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: "기본 설정 업데이트 중 오류가 발생했습니다.",
+        });
     }
-
-    // **트랜잭션 커밋**
-    await connection.commit();
-    connection.release();
-
-    // **스케줄러 재등록**
-    await initializeForceExitScheduler();
-
-    res.status(200).json({
-      success: true,
-      message: "설정 정보가 성공적으로 업데이트되었으며, 강제 퇴실이 완료되었습니다.",
-    });
-
-  } catch (error) {
-    console.error("기본 설정 업데이트 중 오류 발생:", error);
-    if (connection) await connection.rollback();
-    res.status(500).json({ success: false, message: "기본 설정 업데이트 중 오류가 발생했습니다." });
   }
-});
+);
 // 기본 설정 수정 API 끝
 
 // 좌석 정보 수정 API 시작 - 좌석 관리
@@ -2016,5 +2094,92 @@ router.patch(
   }
 );
 // 좌석 정보 수정 API 끝
+
+// 사용자 강제 회원 탈퇴 API 시작
+router.delete(
+  "/users/withdrawal/:user_id",
+  csrfProtection,
+  limiter,
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { user_id } = req.params;
+    const userId = parseInt(user_id, 10);
+
+    if (isNaN(userId)) {
+      res
+        .status(400)
+        .json({ success: false, message: "유효한 사용자 ID가 필요합니다." });
+      return;
+    }
+
+    let connection;
+    try {
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+
+      // 사용자 정보 조회
+      const [user] = await connection.query(
+        `SELECT user_id, email, name FROM user WHERE user_id = ?`,
+        [userId]
+      );
+
+      if (!user) {
+        res
+          .status(404)
+          .json({ success: false, message: "사용자 정보를 찾을 수 없습니다." });
+        return;
+      }
+
+      // 현재 예약 확인
+      const reservations = await connection.query(
+        `SELECT book_id FROM book WHERE user_id = ? AND state = 'book'`,
+        [userId]
+      );
+
+      if (reservations.length > 0) {
+        // 예약된 좌석 강제 퇴실 처리
+        for (const reservation of reservations) {
+          await connection.query(
+            `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+            [reservation.book_id]
+          );
+
+          // 로그 기록
+          await connection.query(
+            `INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+            VALUES (?, NOW(), 'cancel', 'book', '강제 회원 탈퇴로 인한 강제 퇴실')`,
+            [reservation.book_id]
+          );
+        }
+      }
+
+      // 사용자 정보 삭제
+      await connection.query(`DELETE FROM user WHERE user_id = ?`, [userId]);
+
+      // 트랜잭션 커밋
+      await connection.commit();
+      connection.release();
+
+      res.status(200).json({
+        success: true,
+        message:
+          "사용자가 성공적으로 삭제되었으며, 예약 좌석도 강제 퇴실되었습니다.",
+      });
+    } catch (error) {
+      console.error("사용자 삭제 중 오류 발생:", error);
+
+      if (connection) await connection.rollback();
+
+      res.status(500).json({
+        success: false,
+        message: "사용자 삭제 중 서버 오류가 발생했습니다.",
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+// 사용자 강제 회원 탈퇴 API 끝
 
 export default router;
