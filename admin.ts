@@ -1194,7 +1194,7 @@ router.patch(
       // 요청자의 권한 확인
       const requestingUser = req.user; // 요청자의 정보
       const [targetUserResult] = await connection.query(
-        `SELECT permission FROM user WHERE user_id = ?`,
+        `SELECT permission, state FROM user WHERE user_id = ?`,
         [userId]
       );
 
@@ -1235,8 +1235,35 @@ router.patch(
         queryParams.push(email.trim());
       }
 
-      // 상태(state) 수정 (admin, superadmin 모두 가능)
-      if (state) {
+      // 사용자 상태(state) 수정 (admin, superadmin 모두 가능)
+      const targetCurrentState = targetUserResult.state;
+
+      // 비활성화 시 현재 예약 확인 및 강제 퇴실
+      if (state === "inactive" && targetCurrentState !== "inactive") {
+        // 현재 예약 확인
+        const reservations = await connection.query(
+          `SELECT book_id FROM book WHERE user_id = ? AND state = 'book'`,
+          [userId]
+        );
+
+        if (reservations.length > 0) {
+          // 강제 퇴실 처리
+          for (const reservation of reservations) {
+            await connection.query(
+              `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+              [reservation.book_id]
+            );
+
+            // 로그 기록
+            await connection.query(
+              `INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+              VALUES (?, NOW(), 'cancel', 'book', '사용자 비활성화로 인한 강제 퇴실')`,
+              [reservation.book_id]
+            );
+          }
+        }
+
+        // 상태 변경
         fieldsToUpdate.push("state = ?");
         queryParams.push(state);
       }
@@ -2016,5 +2043,88 @@ router.patch(
   }
 );
 // 좌석 정보 수정 API 끝
+
+// 사용자 강제 회원 탈퇴 API 시작
+router.delete(
+  "/users/withdrawal/:user_id",
+  csrfProtection,
+  limiter,
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { user_id } = req.params;
+    const userId = parseInt(user_id, 10);
+
+    if (isNaN(userId)) {
+      res.status(400).json({ success: false, message: "유효한 사용자 ID가 필요합니다." });
+      return;
+    }
+
+    let connection;
+    try {
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+
+      // 사용자 정보 조회
+      const [user] = await connection.query(
+        `SELECT user_id, email, name FROM user WHERE user_id = ?`,
+        [userId]
+      );
+
+      if (!user) {
+        res.status(404).json({ success: false, message: "사용자 정보를 찾을 수 없습니다." });
+        return;
+      }
+
+      // 현재 예약 확인
+      const reservations = await connection.query(
+        `SELECT book_id FROM book WHERE user_id = ? AND state = 'book'`,
+        [userId]
+      );
+
+      if (reservations.length > 0) {
+        // 예약된 좌석 강제 퇴실 처리
+        for (const reservation of reservations) {
+          await connection.query(
+            `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+            [reservation.book_id]
+          );
+
+          // 로그 기록
+          await connection.query(
+            `INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+            VALUES (?, NOW(), 'cancel', 'book', '강제 회원 탈퇴로 인한 강제 퇴실')`,
+            [reservation.book_id]
+          );
+        }
+      }
+
+      // 사용자 정보 삭제
+      await connection.query(`DELETE FROM user WHERE user_id = ?`, [userId]);
+
+      // 트랜잭션 커밋
+      await connection.commit();
+      connection.release();
+
+      res.status(200).json({
+        success: true,
+        message: "사용자가 성공적으로 삭제되었으며, 예약 좌석도 강제 퇴실되었습니다.",
+      });
+    } catch (error) {
+      console.error("사용자 삭제 중 오류 발생:", error);
+
+      if (connection) await connection.rollback();
+
+      res.status(500).json({
+        success: false,
+        message: "사용자 삭제 중 서버 오류가 발생했습니다.",
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+// 사용자 강제 회원 탈퇴 API 끝
+
 
 export default router;

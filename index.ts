@@ -2251,3 +2251,71 @@ app.get("/book/restriction/seats",limiter, async (req, res) => {
   }
 });
 // 현재 예약 제한 좌석 조회 API 끝
+
+
+
+// 회원 탈퇴 API 시작
+app.delete("/users/withdrawal", csrfProtection, authenticateToken, async (req, res) => {
+  const userId = req.user?.userId; // 인증된 사용자 ID
+
+  if (!userId) {
+    res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
+    return;
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // 사용자의 현재 예약 상태 확인
+    const reservations = await connection.query(
+      `SELECT book_id FROM book WHERE user_id = ? AND state = 'book'`,
+      [userId]
+    );
+
+    if (reservations.length > 0) {
+      // 예약된 좌석이 있으면 강제 퇴실 처리
+      for (const reservation of reservations) {
+        await connection.query(
+          `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+          [reservation.book_id]
+        );
+
+        // 로그 기록 (강제 퇴실 사유)
+        await connection.query(
+          `INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+          VALUES (?, NOW(), 'cancel', 'book', '회원 탈퇴로 인한 강제 퇴실')`,
+          [reservation.book_id]
+        );
+      }
+    }
+
+    // 회원 정보 삭제
+    const result = await connection.query(`DELETE FROM user WHERE user_id = ?`, [userId]);
+
+    if (result.affectedRows === 0) {
+      throw new Error("사용자 정보를 찾을 수 없습니다.");
+    }
+
+    // 트랜잭션 커밋
+    await connection.commit();
+
+    // 쿠키 삭제 (프론트에서 로그아웃 요청 없이 자동 삭제)
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
+
+    res.status(200).json({
+      success: true,
+      message: "회원 탈퇴가 성공적으로 처리되었습니다.",
+    });
+
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error("회원 탈퇴 처리 중 오류 발생:", err);
+    res.status(500).json({ success: false, message: "서버 오류로 인해 탈퇴 처리에 실패했습니다." });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+// 회원 탈퇴 API 끝
