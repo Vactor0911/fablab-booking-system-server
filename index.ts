@@ -2255,7 +2255,7 @@ app.get("/book/restriction/seats",limiter, async (req, res) => {
 
 
 // 회원 탈퇴 API 시작
-app.delete("/users/withdrawal", csrfProtection, authenticateToken, async (req, res) => {
+app.delete("/users/withdrawal", csrfProtection, authenticateToken, limiter, async (req, res) => {
   const userId = req.user?.userId; // 인증된 사용자 ID
 
   if (!userId) {
