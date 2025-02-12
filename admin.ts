@@ -392,13 +392,6 @@ router.patch(
       return;
     }
 
-    if (!validator.isLength(content, { min: 1, max: 1000 })) {
-      res.status(400).json({
-        success: false,
-        message: "내용은 1~1000자 사이여야 합니다.",
-      });
-      return;
-    }
     if (
       allowedSymbolsForNotice.test(title) ||
       allowedSymbolsForNotice.test(content)
