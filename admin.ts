@@ -17,9 +17,23 @@ import sanitizeHtml from "sanitize-html"; // HTML 필터링 라이브러리
 
 // 허용할 태그 및 속성 정의
 const sanitizeOptions = {
-  allowedTags: ["p", "span", "b", "i", "strong", "em", "ul", "ol", "li", "a", "br", "blockquote"], // 허용할 태그
+  allowedTags: [
+    "p",
+    "span",
+    "b",
+    "i",
+    "strong",
+    "em",
+    "ul",
+    "ol",
+    "li",
+    "a",
+    "br",
+    "blockquote",
+    "s",
+  ], // 허용할 태그
   allowedAttributes: {
-    "*": ["style"],
+    "*": ["style", "class"],
     a: ["href", "target"],
   },
   // allowedFrameHostnames: ['www.youtube.com'] // iframe 허용하되 유튜브 사이트만 허용
@@ -352,7 +366,6 @@ router.post(
 );
 // 강제 퇴실 API 끝
 
-
 // 공지사항 수정 API 시작
 router.patch(
   "/notice/:uuid",
@@ -386,7 +399,10 @@ router.patch(
       });
       return;
     }
-    if (allowedSymbolsForNotice.test(title) || allowedSymbolsForNotice.test(content)) {
+    if (
+      allowedSymbolsForNotice.test(title) ||
+      allowedSymbolsForNotice.test(content)
+    ) {
       res.status(400).json({
         success: false,
         message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
@@ -410,7 +426,7 @@ router.patch(
       SET title = ?, content = ?, admin_id = ?, date = NOW()
       WHERE notice_id = ?
       `,
-        [sanitizedTitle, sanitizedContent, userId, noticeId] 
+        [sanitizedTitle, sanitizedContent, userId, noticeId]
       );
 
       // 로그 기록 추가
@@ -441,7 +457,6 @@ router.patch(
   }
 );
 // 공지사항 수정 API 끝
-
 
 // 공지사항 생성, 공지사항 작성 API 시작
 router.post(
@@ -476,7 +491,10 @@ router.post(
       });
       return;
     }
-    if (allowedSymbolsForNotice.test(title) || allowedSymbolsForNotice.test(content)) {
+    if (
+      allowedSymbolsForNotice.test(title) ||
+      allowedSymbolsForNotice.test(content)
+    ) {
       res.status(400).json({
         success: false,
         message: "제목과 내용에 허용되지 않는 특수문자가 포함되어 있습니다.",
@@ -533,7 +551,6 @@ router.post(
   }
 );
 // 공지사항 생성 API 끝
-
 
 // 공지사항 삭제 API 시작
 router.delete(
@@ -1860,12 +1877,10 @@ router.patch(
     }
 
     if (available_start_time > available_end_time) {
-      res
-        .status(400)
-        .json({
-          success: false,
-          message: "예약 가능 시간이 올바르지 않습니다.",
-        });
+      res.status(400).json({
+        success: false,
+        message: "예약 가능 시간이 올바르지 않습니다.",
+      });
       return;
     }
 
@@ -1970,12 +1985,10 @@ router.patch(
       );
 
       if (result.affectedRows === 0) {
-        res
-          .status(404)
-          .json({
-            success: false,
-            message: "업데이트할 설정 정보를 찾을 수 없습니다.",
-          });
+        res.status(404).json({
+          success: false,
+          message: "업데이트할 설정 정보를 찾을 수 없습니다.",
+        });
         return;
       }
 
@@ -1994,12 +2007,10 @@ router.patch(
     } catch (error) {
       console.error("기본 설정 업데이트 중 오류 발생:", error);
       if (connection) await connection.rollback();
-      res
-        .status(500)
-        .json({
-          success: false,
-          message: "기본 설정 업데이트 중 오류가 발생했습니다.",
-        });
+      res.status(500).json({
+        success: false,
+        message: "기본 설정 업데이트 중 오류가 발생했습니다.",
+      });
     }
   }
 );
