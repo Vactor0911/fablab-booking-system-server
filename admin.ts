@@ -17,9 +17,10 @@ import sanitizeHtml from "sanitize-html"; // HTML 필터링 라이브러리
 
 // 허용할 태그 및 속성 정의
 const sanitizeOptions = {
-  allowedTags: ["p", "b", "i", "strong", "em", "ul", "ol", "li", "a", "br"], // 허용할 태그
+  allowedTags: ["p", "b", "i", "strong", "em", "ul", "ol", "li", "a", "br", "blockquote"], // 허용할 태그
   allowedAttributes: {
-    a: ["href", "target"], // a 태그의 href, target 속성만 허용
+    "*": ["style"],
+    a: ["href", "target"],
   },
   // allowedFrameHostnames: ['www.youtube.com'] // iframe 허용하되 유튜브 사이트만 허용
 };
