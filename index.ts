@@ -921,17 +921,17 @@ app.get("/seats/:seatName", limiter, async (req, res) => {
     const [seat] = await db.query(
       `
       SELECT 
-        seat_id,
-        name AS seat_name,
-        pc_support,
-        image_path,
+        s.seat_id,
+        s.name AS seat_name,
+        s.pc_support,
+        s.image_path,
         ds.basic_manners,
         ds.available_end_time,
-        warning,
+        s.warning,
         TIME_FORMAT(b.book_date, '%H:%i') AS reservation_time
       FROM seat s
-      CROSS JOIN default_settings ds
       LEFT JOIN book b ON s.seat_id = b.seat_id AND b.state = 'book'
+      CROSS JOIN default_settings ds
       WHERE s.name = ?
       LIMIT 1
       `,
