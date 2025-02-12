@@ -1973,17 +1973,6 @@ app.post("/force-exit/schedule/endtime", async (req, res) => {
     );
 
     const availableEndTime = defaultSettings?.available_end_time || "23:59:59";
-    const currentTime = KorDate();
-
-    // 현재 시간이 종료 시간을 넘어섰는지 확인
-    if (currentTime < availableEndTime) {
-      res.status(200).json({
-        success: true,
-        message:
-          "현재 시간이 종료 시간을 초과하지 않았으므로 강제 퇴실 대상이 없습니다.",
-      });
-      return;
-    }
 
     // Step 2: 강제 퇴실 대상 조회 (모든 'book' 상태의 예약)
     const affectedReservations = await connection.query(
