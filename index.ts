@@ -169,20 +169,27 @@ export const initializeForceExitScheduler = async () => {
     }
 
     // 새로운 스케줄러 등록
-    const cronExpression = `${minute} ${hour} * * *`; // 종료 시간에 맞게 크론 표현식 생성
-    currentScheduler = cron.schedule(cronExpression, async () => {
-      try {
-        console.log(`[${KorDate()}] 강제 퇴실 스케줄러 실행`);
+    const cronExpression = `${minute} 0,${hour} * * *`; // 종료 시간에 맞게 크론 표현식 생성
+    currentScheduler = cron.schedule(
+      cronExpression,
+      async () => {
+        try {
+          console.log(`[${KorDate()}] 강제 퇴실 스케줄러 실행`);
 
-        // 강제 퇴실 API 호출
-        const response = await axios.post(
-          `${process.env.SERVER_HOST}/force-exit/schedule/endtime`
-        );
-        console.log("강제 퇴실 처리 완료:", response.data.message);
-      } catch (error) {
-        console.error("강제 퇴실 API 호출 중 오류 발생:", error.message);
+          // 강제 퇴실 API 호출
+          const response = await axios.post(
+            `${process.env.SERVER_HOST}/force-exit/schedule/endtime`
+          );
+          console.log("강제 퇴실 처리 완료:", response.data.message);
+        } catch (error) {
+          console.error("강제 퇴실 API 호출 중 오류 발생:", error.message);
+        }
+      },
+      {
+        scheduled: true,
+        timezone: "Asia/Seoul",
       }
-    });
+    );
   } catch (error) {
     console.error("강제 퇴실 스케줄러 초기화 중 오류 발생:", error.message);
   }
@@ -638,7 +645,7 @@ app.post(
             accessToken: newAccessToken,
             userId: decoded.userId,
             name: decoded.name,
-            permission: decoded.permission
+            permission: decoded.permission,
           });
         } catch (err) {
           // Refresh Token 만료 시 DB에서 삭제
@@ -1973,17 +1980,6 @@ app.post("/force-exit/schedule/endtime", async (req, res) => {
     );
 
     const availableEndTime = defaultSettings?.available_end_time || "23:59:59";
-    const currentTime = KorDate();
-
-    // 현재 시간이 종료 시간을 넘어섰는지 확인
-    if (currentTime < availableEndTime) {
-      res.status(200).json({
-        success: true,
-        message:
-          "현재 시간이 종료 시간을 초과하지 않았으므로 강제 퇴실 대상이 없습니다.",
-      });
-      return;
-    }
 
     // Step 2: 강제 퇴실 대상 조회 (모든 'book' 상태의 예약)
     const affectedReservations = await connection.query(
@@ -2211,7 +2207,6 @@ app.post("/force-exit/schedule/restriction", async (req, res) => {
 
 // 현재 예약 제한 좌석 조회 API
 app.get("/book/restriction/seats", limiter, async (req, res) => {
-  
   try {
     const rows = await db.query(
       `
@@ -2219,7 +2214,7 @@ app.get("/book/restriction/seats", limiter, async (req, res) => {
       FROM book_restriction 
       WHERE restriction_start_date <= now() 
       AND restriction_end_date >= now()
-      `,
+      `
     );
 
     if (!rows.length) {
@@ -2241,7 +2236,6 @@ app.get("/book/restriction/seats", limiter, async (req, res) => {
       message: "현재 예약 제한이 적용된 좌석 목록",
       restrictedSeats,
     });
-
   } catch (error) {
     console.error("예약 제한 좌석 조회 중 오류 발생:", error);
     res.status(500).json({
@@ -2252,70 +2246,81 @@ app.get("/book/restriction/seats", limiter, async (req, res) => {
 });
 // 현재 예약 제한 좌석 조회 API 끝
 
-
-
 // 회원 탈퇴 API 시작
-app.delete("/users/withdrawal", limiter, csrfProtection, authenticateToken, async (req, res) => {
-  const userId = req.user?.userId; // 인증된 사용자 ID
+app.delete(
+  "/users/withdrawal",
+  limiter,
+  csrfProtection,
+  authenticateToken,
+  async (req, res) => {
+    const userId = req.user?.userId; // 인증된 사용자 ID
 
-  if (!userId) {
-    res.status(403).json({ success: false, message: "사용자가 인증되지 않았습니다." });
-    return;
-  }
+    if (!userId) {
+      res
+        .status(403)
+        .json({ success: false, message: "사용자가 인증되지 않았습니다." });
+      return;
+    }
 
-  let connection;
-  try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    let connection;
+    try {
+      connection = await db.getConnection();
+      await connection.beginTransaction();
 
-    // 사용자의 현재 예약 상태 확인
-    const reservations = await connection.query(
-      `SELECT book_id FROM book WHERE user_id = ? AND state = 'book'`,
-      [userId]
-    );
+      // 사용자의 현재 예약 상태 확인
+      const reservations = await connection.query(
+        `SELECT book_id FROM book WHERE user_id = ? AND state = 'book'`,
+        [userId]
+      );
 
-    if (reservations.length > 0) {
-      // 예약된 좌석이 있으면 강제 퇴실 처리
-      for (const reservation of reservations) {
-        await connection.query(
-          `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
-          [reservation.book_id]
-        );
+      if (reservations.length > 0) {
+        // 예약된 좌석이 있으면 강제 퇴실 처리
+        for (const reservation of reservations) {
+          await connection.query(
+            `UPDATE book SET state = 'cancel' WHERE book_id = ? AND state = 'book'`,
+            [reservation.book_id]
+          );
 
-        // 로그 기록 (강제 퇴실 사유)
-        await connection.query(
-          `INSERT INTO logs (book_id, log_date, type, log_type, reason) 
+          // 로그 기록 (강제 퇴실 사유)
+          await connection.query(
+            `INSERT INTO logs (book_id, log_date, type, log_type, reason) 
           VALUES (?, NOW(), 'cancel', 'book', '회원 탈퇴로 인한 강제 퇴실')`,
-          [reservation.book_id]
-        );
+            [reservation.book_id]
+          );
+        }
       }
+
+      // 회원 정보 삭제
+      const result = await connection.query(
+        `DELETE FROM user WHERE user_id = ?`,
+        [userId]
+      );
+
+      if (result.affectedRows === 0) {
+        throw new Error("사용자 정보를 찾을 수 없습니다.");
+      }
+
+      // 트랜잭션 커밋
+      await connection.commit();
+
+      // 쿠키 삭제 (프론트에서 로그아웃 요청 없이 자동 삭제)
+      res.clearCookie("accessToken");
+      res.clearCookie("refreshToken");
+
+      res.status(200).json({
+        success: true,
+        message: "회원 탈퇴가 성공적으로 처리되었습니다.",
+      });
+    } catch (err) {
+      if (connection) await connection.rollback();
+      console.error("회원 탈퇴 처리 중 오류 발생:", err);
+      res.status(500).json({
+        success: false,
+        message: "서버 오류로 인해 탈퇴 처리에 실패했습니다.",
+      });
+    } finally {
+      if (connection) connection.release();
     }
-
-    // 회원 정보 삭제
-    const result = await connection.query(`DELETE FROM user WHERE user_id = ?`, [userId]);
-
-    if (result.affectedRows === 0) {
-      throw new Error("사용자 정보를 찾을 수 없습니다.");
-    }
-
-    // 트랜잭션 커밋
-    await connection.commit();
-
-    // 쿠키 삭제 (프론트에서 로그아웃 요청 없이 자동 삭제)
-    res.clearCookie("accessToken");
-    res.clearCookie("refreshToken");
-
-    res.status(200).json({
-      success: true,
-      message: "회원 탈퇴가 성공적으로 처리되었습니다.",
-    });
-
-  } catch (err) {
-    if (connection) await connection.rollback();
-    console.error("회원 탈퇴 처리 중 오류 발생:", err);
-    res.status(500).json({ success: false, message: "서버 오류로 인해 탈퇴 처리에 실패했습니다." });
-  } finally {
-    if (connection) connection.release();
   }
-});
+);
 // 회원 탈퇴 API 끝
