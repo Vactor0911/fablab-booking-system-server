@@ -927,9 +927,11 @@ app.get("/seats/:seatName", limiter, async (req, res) => {
         image_path,
         ds.basic_manners,
         ds.available_end_time,
-        warning
+        warning,
+        TIME_FORMAT(b.book_date, '%H:%i') AS reservation_time
       FROM seat s
       CROSS JOIN default_settings ds
+      LEFT JOIN book b ON s.seat_id = b.seat_id AND b.state = 'book'
       WHERE s.name = ?
       LIMIT 1
       `,
@@ -963,6 +965,7 @@ app.get("/seats/:seatName", limiter, async (req, res) => {
         seatId: seat.seat_id,
         seatName: seat.seat_name,
         basicManners: seat.basic_manners,
+        reservationTime: seat.reservation_time || null,
         availableEndTime: seat.available_end_time, // 예약 종료 시간 추가
         warning: seat.warning,
         pc_support: seat.pc_support,
